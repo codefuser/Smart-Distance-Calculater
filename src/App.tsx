@@ -140,13 +140,17 @@ export default function App() {
             resetTracking={resetTracking}
           />
 
-          {/* Live Map */}
+          {/* Live Map with smooth navigation, styles, chips, and POIs */}
           <div className="flex-1 w-full min-h-0 relative">
             <LiveMap
               rawLocation={rawLocation}
               currentLocation={currentLocation}
               startLocation={startLocation}
               path={path}
+              totalDistanceMeters={totalDistanceMeters}
+              gpsAccuracy={rawAccuracy ?? filteredAccuracy}
+              speed={speed}
+              gpsSignalStatus={gpsSignalStatus}
               trackingStatus={trackingStatus}
               errorMessage={errorMessage}
             />
