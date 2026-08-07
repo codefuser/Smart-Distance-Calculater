@@ -10,8 +10,18 @@ export interface GPSPoint {
 
 export type TrackingStatus = 'idle' | 'tracking' | 'paused' | 'stopped' | 'error';
 
+export type AccuracyQuality = 'Excellent' | 'Good' | 'Fair' | 'Poor';
+
 export interface DistanceMetrics {
   meters: number;
   centimeters: number;
   kilometers: number;
+}
+
+export interface DebugMetrics {
+  acceptedCount: number;
+  rejectedCount: number;
+  lastRejectionReason: string | null;
+  rawDistanceMeters: number;
+  lastMovementDelta: number;
 }

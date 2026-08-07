@@ -1,6 +1,11 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { GPSPoint, TrackingStatus } from '../types';
-import { validateGPSPoint } from '../utils/gpsFilter';
+import { GPSPoint, TrackingStatus, AccuracyQuality, DebugMetrics } from '../types';
+import {
+  validateGPSPointAdvanced,
+  computeMovingAverage,
+  getAccuracyQuality,
+} from '../utils/gpsFilter';
+import { calculateHaversineDistance } from '../utils/haversine';
 
 export interface UseGeolocationTrackerReturn {
   currentLocation: GPSPoint | null;
@@ -8,42 +13,45 @@ export interface UseGeolocationTrackerReturn {
   lastLocation: GPSPoint | null;
   path: GPSPoint[];
   totalDistanceMeters: number;
+  rawDistanceMeters: number;
   elapsedTime: number;
   gpsAccuracy: number | null;
+  accuracyQuality: AccuracyQuality;
   speed: number | null;
   trackingStatus: TrackingStatus;
   errorMessage: string | null;
+  debugMetrics: DebugMetrics;
   startTracking: () => void;
   stopTracking: () => void;
   resetTracking: () => void;
 }
 
-/**
- * Custom React hook for continuous high-accuracy live GPS location tracking
- * with automatic noise filtering and Haversine distance accumulation.
- */
 export function useGeolocationTracker(): UseGeolocationTrackerReturn {
-  // Application State
+  // Primary Tracking State
   const [currentLocation, setCurrentLocation] = useState<GPSPoint | null>(null);
   const [startLocation, setStartLocation] = useState<GPSPoint | null>(null);
   const [lastLocation, setLastLocation] = useState<GPSPoint | null>(null);
   const [path, setPath] = useState<GPSPoint[]>([]);
   const [totalDistanceMeters, setTotalDistanceMeters] = useState<number>(0);
+  const [rawDistanceMeters, setRawDistanceMeters] = useState<number>(0);
   const [elapsedTime, setElapsedTime] = useState<number>(0);
   const [trackingStatus, setTrackingStatus] = useState<TrackingStatus>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // References for active tracking processes & refs to avoid stale closure issues
+  // Debug Metrics State
+  const [acceptedCount, setAcceptedCount] = useState<number>(0);
+  const [rejectedCount, setRejectedCount] = useState<number>(0);
+  const [lastRejectionReason, setLastRejectionReason] = useState<string | null>(null);
+  const [lastMovementDelta, setLastMovementDelta] = useState<number>(0);
+
+  // Refs for tracking processes to avoid closure lag
   const watchIdRef = useRef<number | null>(null);
   const timerIdRef = useRef<number | ReturnType<typeof setInterval> | null>(null);
-  const lastLocationRef = useRef<GPSPoint | null>(null);
+  const lastRawLocationRef = useRef<GPSPoint | null>(null);
+  const acceptedPointsRef = useRef<GPSPoint[]>([]);
+  const smoothedPathRef = useRef<GPSPoint[]>([]);
 
-  // Keep lastLocationRef synced with state
-  useEffect(() => {
-    lastLocationRef.current = lastLocation;
-  }, [lastLocation]);
-
-  // Handle incoming position updates from navigator.geolocation.watchPosition
+  // Position Update Handler
   const handlePositionUpdate = useCallback((position: GeolocationPosition) => {
     const freshPoint: GPSPoint = {
       latitude: position.coords.latitude,
@@ -53,31 +61,73 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
       speed: position.coords.speed,
     };
 
-    // Always update raw current location & accuracy for real-time map indicator
     setCurrentLocation(freshPoint);
 
-    // Validate the point against noise filters using the previous valid point
-    const validation = validateGPSPoint(freshPoint, lastLocationRef.current);
+    // Calculate raw distance regardless of filters for debug comparison
+    if (lastRawLocationRef.current) {
+      const rawDelta = calculateHaversineDistance(
+        lastRawLocationRef.current.latitude,
+        lastRawLocationRef.current.longitude,
+        freshPoint.latitude,
+        freshPoint.longitude
+      );
+      if (rawDelta > 0) {
+        setRawDistanceMeters((prev) => prev + rawDelta);
+      }
+    }
+    lastRawLocationRef.current = freshPoint;
+
+    // Advanced Adaptive Validation
+    const validation = validateGPSPointAdvanced(
+      freshPoint,
+      acceptedPointsRef.current[acceptedPointsRef.current.length - 1] || null,
+      acceptedPointsRef.current
+    );
 
     if (validation.isValid) {
-      // 1. Set start location if this is the first valid point
+      // Add to accepted points buffer
+      acceptedPointsRef.current.push(freshPoint);
+      setAcceptedCount((prev) => prev + 1);
+
+      // Compute 5-point moving average for noise smoothing
+      const smoothedPoint = computeMovingAverage(acceptedPointsRef.current, 5);
+
+      // Set start location on first valid point
       setStartLocation((prevStart) => {
-        if (!prevStart) return freshPoint;
+        if (!prevStart) return smoothedPoint;
         return prevStart;
       });
 
-      // 2. Accumulate valid movement distance
-      if (validation.distanceDelta > 0) {
-        setTotalDistanceMeters((prevDist) => prevDist + validation.distanceDelta);
+      // Calculate distance increment using smoothed coordinates to prevent spikes
+      const lastSmoothed = smoothedPathRef.current[smoothedPathRef.current.length - 1];
+      let distanceIncrement = 0;
+
+      if (lastSmoothed) {
+        distanceIncrement = calculateHaversineDistance(
+          lastSmoothed.latitude,
+          lastSmoothed.longitude,
+          smoothedPoint.latitude,
+          smoothedPoint.longitude
+        );
       }
 
-      // 3. Update last valid location and append to travel path
-      setLastLocation(freshPoint);
-      setPath((prevPath) => [...prevPath, freshPoint]);
+      setLastMovementDelta(distanceIncrement);
+
+      if (distanceIncrement > 0) {
+        setTotalDistanceMeters((prevDist) => prevDist + distanceIncrement);
+      }
+
+      // Update smoothed path and last valid point
+      smoothedPathRef.current.push(smoothedPoint);
+      setLastLocation(smoothedPoint);
+      setPath([...smoothedPathRef.current]);
+    } else {
+      setRejectedCount((prev) => prev + 1);
+      setLastRejectionReason(validation.reason || 'Failed validation');
     }
   }, []);
 
-  // Handle Geolocation Errors
+  // Geolocation Error Handler
   const handlePositionError = useCallback((error: GeolocationPositionError) => {
     let msg = 'Failed to obtain GPS position.';
     switch (error.code) {
@@ -95,7 +145,7 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     setTrackingStatus('error');
   }, []);
 
-  // Start continuous GPS tracking
+  // Control Functions
   const startTracking = useCallback(() => {
     if (!navigator.geolocation) {
       setErrorMessage('Geolocation API is not supported by your browser.');
@@ -103,18 +153,15 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
       return;
     }
 
-    // Reset error state and update status
     setErrorMessage(null);
     setTrackingStatus('tracking');
 
-    // Start timer interval for elapsed tracking time
     if (!timerIdRef.current) {
       timerIdRef.current = setInterval(() => {
         setElapsedTime((prevSeconds) => prevSeconds + 1);
       }, 1000);
     }
 
-    // Initiate continuous live position watching
     if (watchIdRef.current === null) {
       watchIdRef.current = navigator.geolocation.watchPosition(
         handlePositionUpdate,
@@ -128,7 +175,6 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     }
   }, [handlePositionUpdate, handlePositionError]);
 
-  // Stop continuous GPS tracking and freeze distance
   const stopTracking = useCallback(() => {
     if (watchIdRef.current !== null) {
       navigator.geolocation.clearWatch(watchIdRef.current);
@@ -143,7 +189,6 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     setTrackingStatus('stopped');
   }, []);
 
-  // Reset tracking engine to initial clean state
   const resetTracking = useCallback(() => {
     stopTracking();
     setCurrentLocation(null);
@@ -151,12 +196,21 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     setLastLocation(null);
     setPath([]);
     setTotalDistanceMeters(0);
+    setRawDistanceMeters(0);
     setElapsedTime(0);
+    setAcceptedCount(0);
+    setRejectedCount(0);
+    setLastRejectionReason(null);
+    setLastMovementDelta(0);
     setErrorMessage(null);
     setTrackingStatus('idle');
+
+    acceptedPointsRef.current = [];
+    smoothedPathRef.current = [];
+    lastRawLocationRef.current = null;
   }, [stopTracking]);
 
-  // Cleanup watcher and timer on hook unmount
+  // Unmount Cleanup
   useEffect(() => {
     return () => {
       if (watchIdRef.current !== null) {
@@ -168,8 +222,8 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     };
   }, []);
 
-  // Derived properties
   const gpsAccuracy = currentLocation ? currentLocation.accuracy : null;
+  const accuracyQuality = getAccuracyQuality(gpsAccuracy);
   const speed = currentLocation ? currentLocation.speed ?? null : null;
 
   return {
@@ -178,11 +232,20 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     lastLocation,
     path,
     totalDistanceMeters,
+    rawDistanceMeters,
     elapsedTime,
     gpsAccuracy,
+    accuracyQuality,
     speed,
     trackingStatus,
     errorMessage,
+    debugMetrics: {
+      acceptedCount,
+      rejectedCount,
+      lastRejectionReason,
+      rawDistanceMeters,
+      lastMovementDelta,
+    },
     startTracking,
     stopTracking,
     resetTracking,

@@ -1,12 +1,13 @@
 import React from 'react';
 import { Play, Square, RotateCcw, Compass, Activity, Clock, Gauge, Navigation } from 'lucide-react';
-import { GPSPoint, TrackingStatus } from '../types';
+import { GPSPoint, TrackingStatus, AccuracyQuality } from '../types';
 
 interface TrackingControlsProps {
   currentLocation: GPSPoint | null;
   totalDistanceMeters: number;
   elapsedTime: number;
   gpsAccuracy: number | null;
+  accuracyQuality: AccuracyQuality;
   speed: number | null;
   trackingStatus: TrackingStatus;
   startTracking: () => void;
@@ -59,11 +60,27 @@ function getStatusBadge(status: TrackingStatus) {
   }
 }
 
+// Accuracy quality badge style helper
+function getAccuracyBadge(quality: AccuracyQuality) {
+  switch (quality) {
+    case 'Excellent':
+      return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
+    case 'Good':
+      return 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30';
+    case 'Fair':
+      return 'bg-amber-500/10 text-amber-400 border-amber-500/30';
+    case 'Poor':
+    default:
+      return 'bg-rose-500/10 text-rose-400 border-rose-500/30';
+  }
+}
+
 export const TrackingControls: React.FC<TrackingControlsProps> = ({
   currentLocation,
   totalDistanceMeters,
   elapsedTime,
   gpsAccuracy,
+  accuracyQuality,
   speed,
   trackingStatus,
   startTracking,
@@ -72,6 +89,7 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
 }) => {
   const isTracking = trackingStatus === 'tracking';
   const statusBadge = getStatusBadge(trackingStatus);
+  const accuracyBadgeClass = getAccuracyBadge(accuracyQuality);
 
   // Speed in km/h (speed from geolocation API is in m/s)
   const speedKmH = speed !== null && speed >= 0 ? (speed * 3.6).toFixed(1) : '0.0';
@@ -146,7 +164,7 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
           </div>
         </div>
 
-        {/* GPS Accuracy */}
+        {/* GPS Accuracy & Accuracy Indicator */}
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 shadow-sm">
           <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400 mb-1">
             <Compass className="w-3.5 h-3.5 text-indigo-400" />
@@ -156,8 +174,12 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
             {gpsAccuracy !== null ? `±${gpsAccuracy.toFixed(1)}` : '---'}{' '}
             <span className="text-xs font-normal text-slate-400">m</span>
           </div>
-          <div className="text-xs text-slate-400">
-            {gpsAccuracy !== null && gpsAccuracy <= 20 ? 'Good Signal' : 'Acquiring'}
+          <div className="mt-1">
+            <span
+              className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold border ${accuracyBadgeClass}`}
+            >
+              {accuracyQuality}
+            </span>
           </div>
         </div>
 

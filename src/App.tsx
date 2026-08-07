@@ -1,6 +1,7 @@
 import { useGeolocationTracker } from './hooks/useGeolocationTracker';
 import { LiveMap } from './components/LiveMap';
 import { TrackingControls } from './components/TrackingControls';
+import { DebugPanel } from './components/DebugPanel';
 
 export default function App() {
   const {
@@ -10,9 +11,11 @@ export default function App() {
     totalDistanceMeters,
     elapsedTime,
     gpsAccuracy,
+    accuracyQuality,
     speed,
     trackingStatus,
     errorMessage,
+    debugMetrics,
     startTracking,
     stopTracking,
     resetTracking,
@@ -26,7 +29,7 @@ export default function App() {
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
           Distance Meter
         </h1>
-        <span className="text-xs text-slate-500 font-mono">Live Measurement Tool</span>
+        <span className="text-xs text-slate-500 font-mono">Precision Distance Measurement</span>
       </header>
 
       {/* Top Controls & Live Information Cards */}
@@ -35,6 +38,7 @@ export default function App() {
         totalDistanceMeters={totalDistanceMeters}
         elapsedTime={elapsedTime}
         gpsAccuracy={gpsAccuracy}
+        accuracyQuality={accuracyQuality}
         speed={speed}
         trackingStatus={trackingStatus}
         startTracking={startTracking}
@@ -42,7 +46,7 @@ export default function App() {
         resetTracking={resetTracking}
       />
 
-      {/* Below: Live Map Container */}
+      {/* Live Map Container */}
       <div className="flex-1 w-full min-h-0 relative">
         <LiveMap
           currentLocation={currentLocation}
@@ -52,6 +56,13 @@ export default function App() {
           errorMessage={errorMessage}
         />
       </div>
+
+      {/* Collapsible Debug Panel at Bottom */}
+      <DebugPanel
+        currentLocation={currentLocation}
+        debugMetrics={debugMetrics}
+        totalDistanceMeters={totalDistanceMeters}
+      />
     </main>
   );
 }
