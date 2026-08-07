@@ -21,6 +21,10 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Reports (Local documentation)
+reports/
+REPORT.md
+
 # Editor & OS files
 .DS_Store
 .vscode/*
