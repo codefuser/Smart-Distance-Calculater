@@ -6,8 +6,7 @@ interface TrackingControlsProps {
   currentLocation: GPSPoint | null;
   totalDistanceMeters: number;
   elapsedTime: number;
-  rawAccuracy: number | null;
-  filteredAccuracy: number | null;
+  gpsAccuracy: number | null;
   accuracyQuality: AccuracyQuality;
   gpsSignalStatus: GPSSignalStatus;
   speed: number | null;
@@ -74,8 +73,8 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
   currentLocation,
   totalDistanceMeters,
   elapsedTime,
-  rawAccuracy,
-  filteredAccuracy,
+  gpsAccuracy,
+  accuracyQuality,
   gpsSignalStatus,
   speed,
   trackingStatus,
@@ -159,21 +158,17 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
           </div>
         </div>
 
-        {/* Raw & Filtered GPS Accuracy */}
+        {/* GPS Accuracy */}
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 shadow-sm">
-          <div className="flex items-center justify-between text-xs font-medium text-slate-400 mb-1">
-            <span className="flex items-center gap-1">
-              <Compass className="w-3.5 h-3.5 text-indigo-400" /> GPS Accuracy
-            </span>
+          <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400 mb-1">
+            <Compass className="w-3.5 h-3.5 text-indigo-400" />
+            GPS Accuracy
           </div>
-          <div className="text-xs space-y-0.5 font-mono">
-            <div className="text-slate-200 font-semibold">
-              Raw: {rawAccuracy !== null ? `±${rawAccuracy.toFixed(1)}m` : '---'}
-            </div>
-            <div className="text-emerald-400">
-              Filtered: {filteredAccuracy !== null ? `±${filteredAccuracy.toFixed(1)}m` : '---'}
-            </div>
+          <div className="text-base font-bold text-slate-100 truncate">
+            {gpsAccuracy !== null ? `±${gpsAccuracy.toFixed(1)}` : '---'}{' '}
+            <span className="text-xs font-normal text-slate-400">m</span>
           </div>
+          <div className="text-xs text-slate-400 font-semibold">{accuracyQuality}</div>
         </div>
 
         {/* Current Speed */}
@@ -203,7 +198,7 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
           <div className="text-xs text-slate-400">Timer</div>
         </div>
 
-        {/* GPS Signal Status & Tracking Status */}
+        {/* GPS Signal & Tracking Status */}
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 shadow-sm flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-slate-400">Signal:</span>

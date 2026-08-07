@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { GPSPoint, TrackingStatus, AccuracyQuality, GPSSignalStatus, DebugMetrics } from '../types';
+import { GPSPoint, TrackingStatus, AccuracyQuality, GPSSignalStatus } from '../types';
 import {
   validateGPSPointAdvanced,
   computeMovingAverage,
@@ -9,56 +9,42 @@ import {
 import { calculateHaversineDistance } from '../utils/haversine';
 
 export interface UseGeolocationTrackerReturn {
-  rawLocation: GPSPoint | null;
   currentLocation: GPSPoint | null;
   startLocation: GPSPoint | null;
   lastLocation: GPSPoint | null;
   path: GPSPoint[];
   totalDistanceMeters: number;
-  rawDistanceMeters: number;
   elapsedTime: number;
-  rawAccuracy: number | null;
-  filteredAccuracy: number | null;
   gpsAccuracy: number | null;
   accuracyQuality: AccuracyQuality;
   gpsSignalStatus: GPSSignalStatus;
   speed: number | null;
   trackingStatus: TrackingStatus;
   errorMessage: string | null;
-  debugMetrics: DebugMetrics;
   startTracking: () => void;
   stopTracking: () => void;
   resetTracking: () => void;
 }
 
 export function useGeolocationTracker(): UseGeolocationTrackerReturn {
-  // Primary State
-  const [rawLocation, setRawLocation] = useState<GPSPoint | null>(null);
+  // Tracking State
   const [currentLocation, setCurrentLocation] = useState<GPSPoint | null>(null);
   const [startLocation, setStartLocation] = useState<GPSPoint | null>(null);
   const [lastLocation, setLastLocation] = useState<GPSPoint | null>(null);
   const [path, setPath] = useState<GPSPoint[]>([]);
   const [totalDistanceMeters, setTotalDistanceMeters] = useState<number>(0);
-  const [rawDistanceMeters, setRawDistanceMeters] = useState<number>(0);
   const [elapsedTime, setElapsedTime] = useState<number>(0);
   const [trackingStatus, setTrackingStatus] = useState<TrackingStatus>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Debug Metrics State
-  const [acceptedCount, setAcceptedCount] = useState<number>(0);
-  const [rejectedCount, setRejectedCount] = useState<number>(0);
-  const [lastRejectionReason, setLastRejectionReason] = useState<string | null>(null);
-  const [lastMovementDelta, setLastMovementDelta] = useState<number>(0);
-
   // Tracking Refs
   const watchIdRef = useRef<number | null>(null);
   const timerIdRef = useRef<number | ReturnType<typeof setInterval> | null>(null);
-  const lastRawLocationRef = useRef<GPSPoint | null>(null);
   const acceptedPointsRef = useRef<GPSPoint[]>([]);
   const smoothedPathRef = useRef<GPSPoint[]>([]);
   const recentRawPointsBufferRef = useRef<GPSPoint[]>([]);
 
-  // Immediate Position Handler
+  // Position Handler
   const handlePositionUpdate = useCallback((position: GeolocationPosition) => {
     const freshPoint: GPSPoint = {
       latitude: position.coords.latitude,
@@ -68,30 +54,13 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
       speed: position.coords.speed,
     };
 
-    // 1. ALWAYS update raw location immediately for map marker responsiveness
-    setRawLocation(freshPoint);
-
     // Maintain recent raw buffer (last 3 points)
     recentRawPointsBufferRef.current.push(freshPoint);
     if (recentRawPointsBufferRef.current.length > 3) {
       recentRawPointsBufferRef.current.shift();
     }
 
-    // Calculate raw distance regardless of filters for debug comparison
-    if (lastRawLocationRef.current) {
-      const rawDelta = calculateHaversineDistance(
-        lastRawLocationRef.current.latitude,
-        lastRawLocationRef.current.longitude,
-        freshPoint.latitude,
-        freshPoint.longitude
-      );
-      if (rawDelta > 0) {
-        setRawDistanceMeters((prev) => prev + rawDelta);
-      }
-    }
-    lastRawLocationRef.current = freshPoint;
-
-    // 2. Validate point for distance accumulation & filtered path
+    // Adaptive GPS point validation
     const validation = validateGPSPointAdvanced(
       freshPoint,
       acceptedPointsRef.current[acceptedPointsRef.current.length - 1] || null,
@@ -100,11 +69,9 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     );
 
     if (validation.isValid) {
-      // Add to accepted points buffer
       acceptedPointsRef.current.push(freshPoint);
-      setAcceptedCount((prev) => prev + 1);
 
-      // Compute 5-point moving average for coordinate smoothing
+      // Smooth coordinates using 5-point moving average
       const smoothedPoint = computeMovingAverage(acceptedPointsRef.current, 5);
       setCurrentLocation(smoothedPoint);
 
@@ -127,19 +94,14 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
         );
       }
 
-      setLastMovementDelta(distanceIncrement);
-
       if (distanceIncrement > 0) {
         setTotalDistanceMeters((prevDist) => prevDist + distanceIncrement);
       }
 
-      // Update smoothed path and last valid point
+      // Update path and last location
       smoothedPathRef.current.push(smoothedPoint);
       setLastLocation(smoothedPoint);
       setPath([...smoothedPathRef.current]);
-    } else {
-      setRejectedCount((prev) => prev + 1);
-      setLastRejectionReason(validation.reason || 'Failed validation');
     }
   }, []);
 
@@ -183,8 +145,8 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
         handlePositionError,
         {
           enableHighAccuracy: true,
-          timeout: 10000, // Configured for immediate 10s timeout response
-          maximumAge: 0,  // Always fetch fresh GPS fix
+          timeout: 10000,
+          maximumAge: 0,
         }
       );
     }
@@ -206,24 +168,17 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
 
   const resetTracking = useCallback(() => {
     stopTracking();
-    setRawLocation(null);
     setCurrentLocation(null);
     setStartLocation(null);
     setLastLocation(null);
     setPath([]);
     setTotalDistanceMeters(0);
-    setRawDistanceMeters(0);
     setElapsedTime(0);
-    setAcceptedCount(0);
-    setRejectedCount(0);
-    setLastRejectionReason(null);
-    setLastMovementDelta(0);
     setErrorMessage(null);
     setTrackingStatus('idle');
 
     acceptedPointsRef.current = [];
     smoothedPathRef.current = [];
-    lastRawLocationRef.current = null;
     recentRawPointsBufferRef.current = [];
   }, [stopTracking]);
 
@@ -238,37 +193,24 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     };
   }, []);
 
-  const rawAccuracy = rawLocation ? rawLocation.accuracy : null;
-  const filteredAccuracy = currentLocation ? currentLocation.accuracy : null;
-  const gpsAccuracy = rawAccuracy ?? filteredAccuracy;
+  const gpsAccuracy = currentLocation ? currentLocation.accuracy : null;
   const accuracyQuality = getAccuracyQuality(gpsAccuracy);
   const gpsSignalStatus = getGPSSignalStatus(gpsAccuracy);
-  const speed = rawLocation ? rawLocation.speed ?? null : null;
+  const speed = currentLocation ? currentLocation.speed ?? null : null;
 
   return {
-    rawLocation,
     currentLocation,
     startLocation,
     lastLocation,
     path,
     totalDistanceMeters,
-    rawDistanceMeters,
     elapsedTime,
-    rawAccuracy,
-    filteredAccuracy,
     gpsAccuracy,
     accuracyQuality,
     gpsSignalStatus,
     speed,
     trackingStatus,
     errorMessage,
-    debugMetrics: {
-      acceptedCount,
-      rejectedCount,
-      lastRejectionReason,
-      rawDistanceMeters,
-      lastMovementDelta,
-    },
     startTracking,
     stopTracking,
     resetTracking,

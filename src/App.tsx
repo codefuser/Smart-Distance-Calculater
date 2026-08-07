@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useGeolocationTracker } from './hooks/useGeolocationTracker';
 import { LiveMap } from './components/LiveMap';
 import { TrackingControls } from './components/TrackingControls';
-import { DebugPanel } from './components/DebugPanel';
 import { SessionHistory } from './components/SessionHistory';
 import { MeasurementSession } from './types';
 import {
@@ -21,20 +20,17 @@ export default function App() {
   const [sessions, setSessions] = useState<MeasurementSession[]>([]);
 
   const {
-    rawLocation,
     currentLocation,
     startLocation,
     path,
     totalDistanceMeters,
     elapsedTime,
-    rawAccuracy,
-    filteredAccuracy,
+    gpsAccuracy,
     accuracyQuality,
     gpsSignalStatus,
     speed,
     trackingStatus,
     errorMessage,
-    debugMetrics,
     startTracking,
     stopTracking,
     resetTracking,
@@ -129,8 +125,7 @@ export default function App() {
             currentLocation={currentLocation}
             totalDistanceMeters={totalDistanceMeters}
             elapsedTime={elapsedTime}
-            rawAccuracy={rawAccuracy}
-            filteredAccuracy={filteredAccuracy}
+            gpsAccuracy={gpsAccuracy}
             accuracyQuality={accuracyQuality}
             gpsSignalStatus={gpsSignalStatus}
             speed={speed}
@@ -140,28 +135,20 @@ export default function App() {
             resetTracking={resetTracking}
           />
 
-          {/* Live Map with smooth navigation, styles, chips, and POIs */}
+          {/* Live Map */}
           <div className="flex-1 w-full min-h-0 relative">
             <LiveMap
-              rawLocation={rawLocation}
               currentLocation={currentLocation}
               startLocation={startLocation}
               path={path}
               totalDistanceMeters={totalDistanceMeters}
-              gpsAccuracy={rawAccuracy ?? filteredAccuracy}
+              gpsAccuracy={gpsAccuracy}
               speed={speed}
               gpsSignalStatus={gpsSignalStatus}
               trackingStatus={trackingStatus}
               errorMessage={errorMessage}
             />
           </div>
-
-          {/* Debug Panel */}
-          <DebugPanel
-            currentLocation={currentLocation}
-            debugMetrics={debugMetrics}
-            totalDistanceMeters={totalDistanceMeters}
-          />
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto pr-1">

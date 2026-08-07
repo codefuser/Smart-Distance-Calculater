@@ -20,14 +20,6 @@ export interface DistanceMetrics {
   kilometers: number;
 }
 
-export interface DebugMetrics {
-  acceptedCount: number;
-  rejectedCount: number;
-  lastRejectionReason: string | null;
-  rawDistanceMeters: number;
-  lastMovementDelta: number;
-}
-
 export interface MeasurementSession {
   id: string;
   name: string;
