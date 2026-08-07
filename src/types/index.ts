@@ -25,3 +25,21 @@ export interface DebugMetrics {
   rawDistanceMeters: number;
   lastMovementDelta: number;
 }
+
+export interface MeasurementSession {
+  id: string;
+  name: string;
+  date: string;
+  startTime: number;
+  endTime: number;
+  durationSeconds: number;
+  totalDistanceMeters: number;
+  totalDistanceKm: number;
+  averageAccuracyMeters: number;
+  averageSpeedKmH: number;
+  maxSpeedKmH: number;
+  startLocation: { latitude: number; longitude: number } | null;
+  endLocation: { latitude: number; longitude: number } | null;
+  totalGPSPoints: number;
+  path: GPSPoint[];
+}
