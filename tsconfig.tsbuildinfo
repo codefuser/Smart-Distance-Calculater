@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/livemap.tsx","./src/hooks/usegeolocationtracker.ts","./src/types/index.ts","./src/utils/gpsfilter.ts","./src/utils/haversine.ts"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/livemap.tsx","./src/components/trackingcontrols.tsx","./src/hooks/usegeolocationtracker.ts","./src/types/index.ts","./src/utils/gpsfilter.ts","./src/utils/haversine.ts"],"version":"5.9.3"}
