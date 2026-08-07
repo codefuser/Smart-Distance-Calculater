@@ -3,7 +3,7 @@ import { MapContainer, TileLayer, Marker, Polyline, useMap, useMapEvents, Popup 
 import L from 'leaflet';
 import { GPSPoint, TrackingStatus, GPSSignalStatus } from '../types';
 import { calculateBearing } from '../utils/haversine';
-import { Layers, Navigation as NavigationIcon, Compass, ZoomIn, Eye, Activity, ShieldCheck, MapPin } from 'lucide-react';
+import { Layers, Navigation as NavigationIcon, Compass, ZoomIn, Eye, Activity, ShieldCheck, MapPin, RotateCw, Plus, Minus } from 'lucide-react';
 
 interface LiveMapProps {
   currentLocation: GPSPoint | null;
@@ -42,13 +42,13 @@ const MAP_STYLES: Record<MapStyleKey, MapStyleConfig> = {
   esri_satellite: {
     name: 'Esri Satellite',
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+    attribution: 'Tiles &copy; Esri &mdash; Source: Esri',
     maxZoom: 18,
   },
   opentopo: {
     name: 'OpenTopo Terrain',
     url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
-    attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, SRTM | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a>',
+    attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     maxZoom: 17,
   },
   carto_voyager: {
@@ -59,11 +59,12 @@ const MAP_STYLES: Record<MapStyleKey, MapStyleConfig> = {
   },
 };
 
-// Custom DivIcons
-function createNavigationArrowIcon(heading: number) {
+// DivIcons
+function createNavigationArrowIcon(heading: number, counterRotation: number) {
+  const totalRot = heading + counterRotation;
   return L.divIcon({
     className: 'custom-nav-heading-marker',
-    html: `<div style="transform: rotate(${heading}deg); transition: transform 0.15s ease-out;" class="relative flex items-center justify-center w-8 h-8 drop-shadow-lg">
+    html: `<div style="transform: rotate(${totalRot}deg); transition: transform 0.2s ease-out;" class="relative flex items-center justify-center w-8 h-8 drop-shadow-lg">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M12 2L19 21L12 17L5 21L12 2Z" fill="#3b82f6" stroke="#ffffff" stroke-width="2" stroke-linejoin="round"/>
             </svg>
@@ -73,32 +74,19 @@ function createNavigationArrowIcon(heading: number) {
   });
 }
 
-const startFlagIcon = L.divIcon({
-  className: 'custom-start-flag-marker',
-  html: `<div class="flex items-center justify-center w-8 h-8 rounded-full bg-emerald-600 border-2 border-white shadow-xl text-white font-bold text-sm">
-          🚩
+function createFlagIcon(flagEmoji: string, bgClass: string, counterRotation: number) {
+  return L.divIcon({
+    className: 'custom-flag-marker',
+    html: `<div style="transform: rotate(${counterRotation}deg);" class="flex items-center justify-center w-8 h-8 rounded-full ${bgClass} border-2 border-white shadow-xl text-white font-bold text-sm">
+          ${flagEmoji}
         </div>`,
-  iconSize: [32, 32],
-  iconAnchor: [16, 16],
-});
+    iconSize: [32, 32],
+    iconAnchor: [16, 16],
+  });
+}
 
-const endFlagIcon = L.divIcon({
-  className: 'custom-end-flag-marker',
-  html: `<div class="flex items-center justify-center w-8 h-8 rounded-full bg-rose-600 border-2 border-white shadow-xl text-white font-bold text-sm">
-          🏁
-        </div>`,
-  iconSize: [32, 32],
-  iconAnchor: [16, 16],
-});
-
-const poiIcon = L.divIcon({
-  className: 'custom-poi-marker',
-  html: `<div class="w-6 h-6 rounded-full bg-amber-500/90 border border-amber-200 flex items-center justify-center text-[10px] shadow text-slate-950 font-bold">
-          📍
-        </div>`,
-  iconSize: [24, 24],
-  iconAnchor: [12, 12],
-});
+const startFlagIcon = (counterRot: number) => createFlagIcon('🚩', 'bg-emerald-600', counterRot);
+const endFlagIcon = (counterRot: number) => createFlagIcon('🏁', 'bg-rose-600', counterRot);
 
 interface POIItem {
   id: number;
@@ -128,7 +116,7 @@ function MapEventsHandler({
   return null;
 }
 
-// Auto follow controller (only pans when autoFollow is true)
+// Auto follow controller
 function AutoFollowController({
   position,
   autoFollow,
@@ -150,6 +138,22 @@ function AutoFollowController({
   return null;
 }
 
+// Custom Map Pane Rotation Controller
+function MapRotationController({ rotationDeg }: { rotationDeg: number }) {
+  const map = useMap();
+
+  useEffect(() => {
+    const pane = map.getPane('mapPane');
+    if (pane) {
+      pane.style.transformOrigin = 'center center';
+      pane.style.transition = 'transform 0.3s ease-out';
+      pane.style.transform = `rotate(${rotationDeg}deg)`;
+    }
+  }, [rotationDeg, map]);
+
+  return null;
+}
+
 export const LiveMap: React.FC<LiveMapProps> = ({
   currentLocation,
   startLocation,
@@ -161,7 +165,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   trackingStatus,
   errorMessage,
 }) => {
-  // Map Style Choice
+  // Map Style State
   const [selectedStyleKey, setSelectedStyleKey] = useState<MapStyleKey>(() => {
     try {
       const saved = localStorage.getItem('distance_meter_map_style');
@@ -174,6 +178,8 @@ export const LiveMap: React.FC<LiveMapProps> = ({
 
   const [showStyleMenu, setShowStyleMenu] = useState<boolean>(false);
   const [autoFollow, setAutoFollow] = useState<boolean>(true);
+  const [autoRotate, setAutoRotate] = useState<boolean>(false);
+  const [mapRotation, setMapRotation] = useState<number>(0);
   const [currentZoom, setCurrentZoom] = useState<number>(18);
   const [heading, setHeading] = useState<number>(0);
   const [pois, setPois] = useState<POIItem[]>([]);
@@ -191,7 +197,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
 
   const activePoint = currentLocation || startLocation;
 
-  // Heading calculation based on movement
+  // Heading Calculation
   const prevPointRef = useRef<GPSPoint | null>(null);
   useEffect(() => {
     if (activePoint && prevPointRef.current) {
@@ -208,11 +214,45 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         );
         setHeading(newHeading);
         prevPointRef.current = activePoint;
+
+        // If Auto Rotate is ON, update map rotation underneath heading
+        if (autoRotate) {
+          setMapRotation(-newHeading);
+        }
       }
     } else if (activePoint) {
       prevPointRef.current = activePoint;
     }
-  }, [activePoint]);
+  }, [activePoint, autoRotate]);
+
+  // Handle device orientation compass if available when autoRotate is ON
+  useEffect(() => {
+    if (!autoRotate) return;
+
+    const handleOrientation = (e: DeviceOrientationEvent) => {
+      let compassHeading: number | null = null;
+      if ('webkitCompassHeading' in e && typeof e.webkitCompassHeading === 'number') {
+        compassHeading = e.webkitCompassHeading;
+      } else if (e.alpha !== null) {
+        compassHeading = (360 - e.alpha) % 360;
+      }
+
+      if (compassHeading !== null) {
+        setMapRotation(-compassHeading);
+      }
+    };
+
+    window.addEventListener('deviceorientation', handleOrientation, true);
+    return () => {
+      window.removeEventListener('deviceorientation', handleOrientation, true);
+    };
+  }, [autoRotate]);
+
+  // Reset North (0°)
+  const handleResetNorth = useCallback(() => {
+    setAutoRotate(false);
+    setMapRotation(0);
+  }, []);
 
   // Fetch Nearby POIs when Zoom >= 16
   const fetchPOIs = useCallback(async (lat: number, lon: number) => {
@@ -288,38 +328,43 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   const speedKmH = speed !== null && speed >= 0 ? (speed * 3.6).toFixed(1) : '0.0';
 
   return (
-    <div className="w-full h-full min-h-[300px] rounded-xl overflow-hidden border border-slate-800 relative shadow-2xl">
-      {/* Top Left: Live Information Chips */}
-      <div className="absolute top-3 left-3 z-[400] flex flex-wrap items-center gap-1.5 pointer-events-none">
-        <div className="bg-slate-950/80 backdrop-blur-md border border-slate-800 text-slate-100 text-[11px] font-semibold px-2.5 py-1 rounded-full flex items-center gap-1 shadow">
-          <Activity className="w-3 h-3 text-emerald-400" />
+    <div className="w-full h-full min-h-[320px] rounded-xl overflow-hidden border border-slate-800 relative shadow-2xl bg-slate-950">
+      {/* ---------------------------------------------------------------- */}
+      {/* 1. TOP LEFT: Live Distance, Speed & GPS Accuracy Chips (Gap 12px) */}
+      {/* ---------------------------------------------------------------- */}
+      <div className="absolute top-3 left-3 z-[400] flex flex-wrap items-center gap-3 pointer-events-none">
+        <div className="bg-slate-950/85 backdrop-blur-md border border-slate-800 text-slate-100 text-[11px] font-semibold px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-lg">
+          <Activity className="w-3.5 h-3.5 text-emerald-400" />
           <span>{totalDistanceMeters.toFixed(1)} m</span>
         </div>
 
-        <div className="bg-slate-950/80 backdrop-blur-md border border-slate-800 text-slate-100 text-[11px] font-semibold px-2.5 py-1 rounded-full flex items-center gap-1 shadow">
-          <NavigationIcon className="w-3 h-3 text-amber-400" />
+        <div className="bg-slate-950/85 backdrop-blur-md border border-slate-800 text-slate-100 text-[11px] font-semibold px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-lg">
+          <NavigationIcon className="w-3.5 h-3.5 text-amber-400" />
           <span>{speedKmH} km/h</span>
         </div>
 
-        <div className="bg-slate-950/80 backdrop-blur-md border border-slate-800 text-slate-100 text-[11px] font-semibold px-2.5 py-1 rounded-full flex items-center gap-1 shadow">
-          <ShieldCheck className="w-3 h-3 text-indigo-400" />
+        <div className="bg-slate-950/85 backdrop-blur-md border border-slate-800 text-slate-100 text-[11px] font-semibold px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-lg">
+          <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
           <span>{gpsAccuracy !== null ? `±${gpsAccuracy.toFixed(1)}m` : '---'}</span>
         </div>
 
-        <div className="bg-slate-950/80 backdrop-blur-md border border-slate-800 text-emerald-400 text-[10px] font-semibold px-2 py-1 rounded-full shadow">
+        <div className="bg-slate-950/85 backdrop-blur-md border border-slate-800 text-emerald-400 text-[10px] font-semibold px-2.5 py-1 rounded-full shadow-lg">
           {gpsSignalStatus}
         </div>
       </div>
 
-      {/* Top Right: Map Style Selector & Auto Follow Toggle */}
-      <div className="absolute top-3 right-3 z-[400] flex items-center gap-2">
+      {/* ---------------------------------------------------------------- */}
+      {/* 2. TOP RIGHT: Map Style, Auto Follow, Auto Rotate, Reset North   */}
+      {/* ---------------------------------------------------------------- */}
+      <div className="absolute top-3 right-3 z-[400] flex flex-col items-end gap-3">
+        {/* Map Style Button & Dropdown */}
         <div className="relative">
           <button
             onClick={() => setShowStyleMenu((prev) => !prev)}
-            className="bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-lg backdrop-blur-sm transition-all"
-            title="Change Map Style"
+            className="bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-2 shadow-xl backdrop-blur-sm transition-all"
+            title="Map Style"
           >
-            <Layers className="w-3.5 h-3.5 text-emerald-400" />
+            <Layers className="w-4 h-4 text-emerald-400" />
             <span className="hidden sm:inline">{currentStyleConfig.name}</span>
           </button>
 
@@ -342,65 +387,117 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           )}
         </div>
 
+        {/* Auto Follow Toggle Button */}
         <button
           onClick={() => setAutoFollow((prev) => !prev)}
-          className={`text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 border shadow-lg backdrop-blur-sm transition-all ${
+          className={`text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-2 border shadow-xl backdrop-blur-sm transition-all ${
             autoFollow
               ? 'bg-emerald-600/90 hover:bg-emerald-500 text-white border-emerald-500'
               : 'bg-slate-900/90 text-slate-400 border-slate-700 hover:text-slate-200'
           }`}
           title="Toggle Auto Follow"
         >
-          <Eye className="w-3.5 h-3.5" />
+          <Eye className="w-4 h-4" />
           <span className="hidden sm:inline">Auto Follow: {autoFollow ? 'ON' : 'OFF'}</span>
+        </button>
+
+        {/* Auto Rotate Map Toggle Button */}
+        <button
+          onClick={() => {
+            const nextVal = !autoRotate;
+            setAutoRotate(nextVal);
+            if (!nextVal) setMapRotation(0);
+          }}
+          className={`text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-2 border shadow-xl backdrop-blur-sm transition-all ${
+            autoRotate
+              ? 'bg-indigo-600/90 hover:bg-indigo-500 text-white border-indigo-500'
+              : 'bg-slate-900/90 text-slate-400 border-slate-700 hover:text-slate-200'
+          }`}
+          title="Toggle Auto Rotate Map"
+        >
+          <RotateCw className="w-4 h-4" />
+          <span className="hidden sm:inline">Auto Rotate: {autoRotate ? 'ON' : 'OFF'}</span>
+        </button>
+
+        {/* Reset North / Compass Button */}
+        <button
+          onClick={handleResetNorth}
+          className="bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-2 shadow-xl backdrop-blur-sm transition-all"
+          title="Reset North (0°)"
+        >
+          <div
+            style={{ transform: `rotate(${-mapRotation}deg)`, transition: 'transform 0.3s ease-out' }}
+          >
+            <Compass className="w-4 h-4 text-cyan-400" />
+          </div>
+          <span className="hidden sm:inline">
+            {mapRotation === 0 ? 'North' : `${Math.abs(Math.round(mapRotation))}°`}
+          </span>
         </button>
       </div>
 
-      {/* Bottom Right: Re-center & Zoom Controls */}
-      <div className="absolute bottom-6 right-3 z-[400] flex flex-col items-end gap-2">
-        {(!autoFollow || currentMarkerPosition) && (
-          <button
-            onClick={() => {
-              setAutoFollow(true);
-              if (mapRef.current && currentMarkerPosition) {
-                mapRef.current.panTo(currentMarkerPosition, { animate: true, duration: 0.4 });
-              }
-            }}
-            className={`px-3 py-2 rounded-lg font-semibold text-xs border shadow-xl backdrop-blur-sm flex items-center gap-1.5 transition-all ${
-              !autoFollow
-                ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400 animate-bounce'
-                : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 border-slate-700'
-            }`}
-            title="Re-center map"
-          >
-            <MapPin className="w-4 h-4 text-emerald-300" />
-            <span>Re-center</span>
-          </button>
-        )}
-
+      {/* ---------------------------------------------------------------- */}
+      {/* 3. BOTTOM RIGHT: Re-center & Zoom Level Indicator (Gap 12px)     */}
+      {/* ---------------------------------------------------------------- */}
+      <div className="absolute bottom-4 right-3 z-[400] flex flex-col items-end gap-3">
+        {/* Re-center Button */}
         <button
           onClick={() => {
-            if (mapRef.current) {
-              mapRef.current.setZoom(18);
+            setAutoFollow(true);
+            if (mapRef.current && currentMarkerPosition) {
+              mapRef.current.panTo(currentMarkerPosition, { animate: true, duration: 0.4 });
             }
           }}
-          className="p-2 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg text-slate-300 hover:text-white shadow-lg backdrop-blur-sm transition-colors"
-          title="Reset View"
+          className={`px-3 py-2 rounded-lg font-semibold text-xs border shadow-xl backdrop-blur-sm flex items-center gap-2 transition-all ${
+            !autoFollow
+              ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400 animate-bounce'
+              : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 border-slate-700'
+          }`}
+          title="Re-center map"
         >
-          <Compass className="w-4 h-4 text-cyan-400" />
+          <MapPin className="w-4 h-4 text-emerald-300" />
+          <span>Re-center</span>
         </button>
 
-        <div className="bg-slate-950/80 border border-slate-800 text-slate-400 text-[10px] font-mono px-2 py-0.5 rounded shadow backdrop-blur-sm flex items-center gap-1">
-          <ZoomIn className="w-3 h-3 text-slate-500" />
+        {/* Zoom Level Indicator */}
+        <div className="bg-slate-950/90 border border-slate-800 text-slate-300 text-[11px] font-mono px-2.5 py-1.5 rounded-lg shadow-xl backdrop-blur-sm flex items-center gap-1.5">
+          <ZoomIn className="w-3.5 h-3.5 text-slate-400" />
           <span>Zoom: {currentZoom}</span>
         </div>
       </div>
 
-      {/* Leaflet Map Engine */}
+      {/* ---------------------------------------------------------------- */}
+      {/* 4. BOTTOM LEFT: Zoom (+ / -) Control Buttons (Gap 12px)           */}
+      {/* ---------------------------------------------------------------- */}
+      <div className="absolute bottom-4 left-3 z-[400] flex flex-col gap-2">
+        <button
+          onClick={() => {
+            if (mapRef.current) mapRef.current.zoomIn();
+          }}
+          className="w-9 h-9 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-slate-100 rounded-lg shadow-xl flex items-center justify-center backdrop-blur-sm transition-colors active:scale-95"
+          title="Zoom In"
+        >
+          <Plus className="w-5 h-5" />
+        </button>
+        <button
+          onClick={() => {
+            if (mapRef.current) mapRef.current.zoomOut();
+          }}
+          className="w-9 h-9 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-slate-100 rounded-lg shadow-xl flex items-center justify-center backdrop-blur-sm transition-colors active:scale-95"
+          title="Zoom Out"
+        >
+          <Minus className="w-5 h-5" />
+        </button>
+      </div>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* Leaflet Map Engine Container                                     */}
+      {/* ---------------------------------------------------------------- */}
       <MapContainer
         ref={mapRef}
         center={defaultCenter}
         zoom={18}
+        zoomControl={false}
         scrollWheelZoom={true}
         className="w-full h-full"
       >
@@ -418,7 +515,9 @@ export const LiveMap: React.FC<LiveMapProps> = ({
 
         <AutoFollowController position={currentMarkerPosition} autoFollow={autoFollow} />
 
-        {/* Clean Smooth Continuous Polyline */}
+        <MapRotationController rotationDeg={mapRotation} />
+
+        {/* Travel Path Polyline */}
         {polylinePositions.length > 1 && (
           <Polyline
             positions={polylinePositions}
@@ -436,7 +535,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         {startLocation && (
           <Marker
             position={[startLocation.latitude, startLocation.longitude]}
-            icon={startFlagIcon}
+            icon={startFlagIcon(-mapRotation)}
           >
             <Popup>
               <div className="text-xs font-bold text-emerald-600">Start Point</div>
@@ -448,7 +547,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         {endLocation && trackingStatus === 'stopped' && (
           <Marker
             position={[endLocation.latitude, endLocation.longitude]}
-            icon={endFlagIcon}
+            icon={endFlagIcon(-mapRotation)}
           >
             <Popup>
               <div className="text-xs font-bold text-rose-600">End Point</div>
@@ -456,18 +555,23 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           </Marker>
         )}
 
-        {/* Current Navigation Arrow Marker (Stays on latest accepted location) */}
+        {/* Current Navigation Arrow Marker */}
         {currentMarkerPosition && (
           <Marker
             position={currentMarkerPosition}
-            icon={createNavigationArrowIcon(heading)}
+            icon={createNavigationArrowIcon(heading, -mapRotation)}
           />
         )}
 
         {/* Nearby POIs */}
         {currentZoom >= 16 &&
           pois.map((poi) => (
-            <Marker key={`poi_${poi.id}`} position={[poi.lat, poi.lon]} icon={poiIcon}>
+            <Marker key={`poi_${poi.id}`} position={[poi.lat, poi.lon]} icon={L.divIcon({
+              className: 'custom-poi-marker',
+              html: `<div style="transform: rotate(${-mapRotation}deg);" class="w-6 h-6 rounded-full bg-amber-500/90 border border-amber-200 flex items-center justify-center text-[10px] shadow text-slate-950 font-bold">📍</div>`,
+              iconSize: [24, 24],
+              iconAnchor: [12, 12],
+            })}>
               <Popup>
                 <div className="text-xs">
                   <div className="font-bold text-slate-800">{poi.name}</div>
