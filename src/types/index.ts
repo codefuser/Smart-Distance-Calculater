@@ -12,6 +12,8 @@ export type TrackingStatus = 'idle' | 'tracking' | 'paused' | 'stopped' | 'error
 
 export type AccuracyQuality = 'Excellent' | 'Good' | 'Fair' | 'Poor';
 
+export type GPSSignalStatus = 'Searching' | 'Weak Signal' | 'Good Signal' | 'Excellent Signal';
+
 export interface DistanceMetrics {
   meters: number;
   centimeters: number;

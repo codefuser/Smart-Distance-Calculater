@@ -21,13 +21,16 @@ export default function App() {
   const [sessions, setSessions] = useState<MeasurementSession[]>([]);
 
   const {
+    rawLocation,
     currentLocation,
     startLocation,
     path,
     totalDistanceMeters,
     elapsedTime,
-    gpsAccuracy,
+    rawAccuracy,
+    filteredAccuracy,
     accuracyQuality,
+    gpsSignalStatus,
     speed,
     trackingStatus,
     errorMessage,
@@ -40,18 +43,15 @@ export default function App() {
   const prevStatusRef = useRef(trackingStatus);
   const startTimeRef = useRef<number>(Date.now());
 
-  // Load saved sessions on mount
   useEffect(() => {
     setSessions(getSavedSessions());
   }, []);
 
-  // Track start time when tracking begins
   useEffect(() => {
     if (trackingStatus === 'tracking' && prevStatusRef.current !== 'tracking') {
       startTimeRef.current = Date.now();
     }
 
-    // Auto-save session when tracking transitions to 'stopped' with valid recorded points
     if (
       prevStatusRef.current === 'tracking' &&
       trackingStatus === 'stopped' &&
@@ -71,7 +71,6 @@ export default function App() {
     prevStatusRef.current = trackingStatus;
   }, [trackingStatus, path, totalDistanceMeters, elapsedTime]);
 
-  // Wrapped stopTracking to ensure session is captured smoothly
   const handleStopTracking = useCallback(() => {
     stopTracking();
   }, [stopTracking]);
@@ -88,14 +87,13 @@ export default function App() {
 
   return (
     <main className="w-screen h-screen bg-slate-950 p-2 sm:p-4 flex flex-col gap-3 overflow-hidden">
-      {/* Top Header & View Navigation Switcher */}
+      {/* Header */}
       <header className="flex items-center justify-between px-1">
         <h1 className="text-lg font-bold text-slate-100 tracking-tight flex items-center gap-2">
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
           Distance Meter
         </h1>
 
-        {/* View Switcher Tabs */}
         <div className="flex items-center bg-slate-900 border border-slate-800 p-1 rounded-lg">
           <button
             onClick={() => setActiveTab('tracker')}
@@ -123,16 +121,18 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Content Area */}
+      {/* Main Content */}
       {activeTab === 'tracker' ? (
         <div className="flex-1 flex flex-col gap-3 overflow-hidden">
-          {/* Top Controls & Live Metrics Cards */}
+          {/* Top Controls & Metrics */}
           <TrackingControls
             currentLocation={currentLocation}
             totalDistanceMeters={totalDistanceMeters}
             elapsedTime={elapsedTime}
-            gpsAccuracy={gpsAccuracy}
+            rawAccuracy={rawAccuracy}
+            filteredAccuracy={filteredAccuracy}
             accuracyQuality={accuracyQuality}
+            gpsSignalStatus={gpsSignalStatus}
             speed={speed}
             trackingStatus={trackingStatus}
             startTracking={startTracking}
@@ -140,9 +140,10 @@ export default function App() {
             resetTracking={resetTracking}
           />
 
-          {/* Live Map Container */}
+          {/* Live Map */}
           <div className="flex-1 w-full min-h-0 relative">
             <LiveMap
+              rawLocation={rawLocation}
               currentLocation={currentLocation}
               startLocation={startLocation}
               path={path}
@@ -151,7 +152,7 @@ export default function App() {
             />
           </div>
 
-          {/* Collapsible Debug Panel */}
+          {/* Debug Panel */}
           <DebugPanel
             currentLocation={currentLocation}
             debugMetrics={debugMetrics}
@@ -159,7 +160,6 @@ export default function App() {
           />
         </div>
       ) : (
-        /* History Page */
         <div className="flex-1 overflow-y-auto pr-1">
           <SessionHistory
             sessions={sessions}

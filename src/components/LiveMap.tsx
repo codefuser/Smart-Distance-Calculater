@@ -4,6 +4,7 @@ import L from 'leaflet';
 import { GPSPoint, TrackingStatus } from '../types';
 
 interface LiveMapProps {
+  rawLocation: GPSPoint | null;
   currentLocation: GPSPoint | null;
   startLocation: GPSPoint | null;
   path: GPSPoint[];
@@ -11,8 +12,8 @@ interface LiveMapProps {
   errorMessage: string | null;
 }
 
-// Custom DivIcons for crisp dark-mode rendering without asset loading errors
-const currentLocationIcon = L.divIcon({
+// Custom DivIcon for Accepted Filtered Marker (emerald pulsing)
+const filteredLocationIcon = L.divIcon({
   className: 'custom-live-marker',
   html: `<div class="relative flex items-center justify-center w-6 h-6">
           <span class="absolute inline-flex w-full h-full rounded-full bg-emerald-400 opacity-75 animate-ping"></span>
@@ -20,6 +21,16 @@ const currentLocationIcon = L.divIcon({
         </div>`,
   iconSize: [24, 24],
   iconAnchor: [12, 12],
+});
+
+// Custom DivIcon for Raw Unfiltered GPS Marker (Light Gray)
+const rawLocationIcon = L.divIcon({
+  className: 'custom-raw-marker',
+  html: `<div class="relative flex items-center justify-center w-5 h-5 opacity-80">
+          <span class="relative inline-flex w-3.5 h-3.5 rounded-full bg-slate-400 border-2 border-slate-900 shadow"></span>
+        </div>`,
+  iconSize: [20, 20],
+  iconAnchor: [10, 10],
 });
 
 const startMarkerIcon = L.divIcon({
@@ -40,7 +51,7 @@ const endMarkerIcon = L.divIcon({
   iconAnchor: [14, 14],
 });
 
-// Internal helper component to handle map pan/auto-follow
+// Auto follow handler panning immediately on raw or filtered position updates
 function AutoFollowHandler({
   location,
   isTracking,
@@ -54,7 +65,7 @@ function AutoFollowHandler({
     if (isTracking && location) {
       map.panTo([location.latitude, location.longitude], {
         animate: true,
-        duration: 0.8,
+        duration: 0.5,
       });
     }
   }, [location, isTracking, map]);
@@ -63,30 +74,28 @@ function AutoFollowHandler({
 }
 
 export const LiveMap: React.FC<LiveMapProps> = ({
+  rawLocation,
   currentLocation,
   startLocation,
   path,
   trackingStatus,
   errorMessage,
 }) => {
-  // Convert path array to leaflet LatLngTuple format
   const polylinePositions: [number, number][] = path.map((point) => [
     point.latitude,
     point.longitude,
   ]);
 
-  // Determine end location (last location in path when tracking is stopped)
   const endLocation =
     trackingStatus === 'stopped' && path.length > 0
       ? path[path.length - 1]
       : null;
 
-  // Fallback initial center (default to college map or 0,0 until GPS acquired)
-  const defaultCenter: [number, number] = currentLocation
-    ? [currentLocation.latitude, currentLocation.longitude]
-    : startLocation
-    ? [startLocation.latitude, startLocation.longitude]
-    : [13.0827, 80.2707]; // Default Chennai / General coordinate
+  const activePosition = rawLocation || currentLocation || startLocation;
+
+  const defaultCenter: [number, number] = activePosition
+    ? [activePosition.latitude, activePosition.longitude]
+    : [13.0827, 80.2707];
 
   if (errorMessage) {
     return (
@@ -100,7 +109,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     );
   }
 
-  if (!currentLocation && !startLocation) {
+  if (!rawLocation && !currentLocation && !startLocation) {
     return (
       <div className="w-full h-full min-h-[300px] bg-slate-900 flex flex-col items-center justify-center p-6 text-center rounded-xl border border-slate-800">
         <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mb-3"></div>
@@ -123,9 +132,9 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        {/* Auto follow map view update */}
+        {/* Immediate Auto Follow */}
         <AutoFollowHandler
-          location={currentLocation}
+          location={rawLocation || currentLocation}
           isTracking={trackingStatus === 'tracking'}
         />
 
@@ -149,7 +158,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           />
         )}
 
-        {/* End Point Marker (when tracking stopped) */}
+        {/* End Point Marker */}
         {endLocation && trackingStatus === 'stopped' && (
           <Marker
             position={[endLocation.latitude, endLocation.longitude]}
@@ -157,11 +166,19 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           />
         )}
 
-        {/* Live Current Location Marker */}
+        {/* Raw GPS Location Marker (Light Gray) */}
+        {rawLocation && (
+          <Marker
+            position={[rawLocation.latitude, rawLocation.longitude]}
+            icon={rawLocationIcon}
+          />
+        )}
+
+        {/* Filtered Accepted Location Marker (Emerald) */}
         {currentLocation && (
           <Marker
             position={[currentLocation.latitude, currentLocation.longitude]}
-            icon={currentLocationIcon}
+            icon={filteredLocationIcon}
           />
         )}
       </MapContainer>

@@ -1,21 +1,30 @@
-import { GPSPoint, AccuracyQuality } from '../types';
+import { GPSPoint, AccuracyQuality, GPSSignalStatus } from '../types';
 import { calculateHaversineDistance, calculateBearing, calculateAngleDifference } from './haversine';
 
 export interface ValidationResult {
   isValid: boolean;
   distanceDelta: number;
   reason?: string;
-  smoothedPoint?: GPSPoint;
 }
 
 /**
  * Returns accuracy quality tier based on GPS error radius in meters.
  */
 export function getAccuracyQuality(accuracy: number | null): AccuracyQuality {
-  if (accuracy === null || accuracy > 20) return 'Poor';
-  if (accuracy < 5) return 'Excellent';
-  if (accuracy <= 10) return 'Good';
+  if (accuracy === null || accuracy > 50) return 'Poor';
+  if (accuracy <= 10) return 'Excellent';
+  if (accuracy <= 30) return 'Good';
   return 'Fair';
+}
+
+/**
+ * Returns GPS signal status string for live indicator.
+ */
+export function getGPSSignalStatus(accuracy: number | null): GPSSignalStatus {
+  if (accuracy === null) return 'Searching';
+  if (accuracy <= 10) return 'Excellent Signal';
+  if (accuracy <= 30) return 'Good Signal';
+  return 'Weak Signal';
 }
 
 /**
@@ -44,25 +53,26 @@ export function computeMovingAverage(acceptedPoints: GPSPoint[], windowSize = 5)
 }
 
 /**
- * Validates incoming raw GPS point with adaptive accuracy filtering, directional consistency,
- * and realistic speed bounds.
+ * Validates incoming raw GPS point with adaptive accuracy filtering (0-10m, 10-30m, 30-50m, >50m),
+ * 0.5m movement threshold, directional consistency, and realistic speed bounds.
  */
 export function validateGPSPointAdvanced(
   newPoint: GPSPoint,
   lastPoint: GPSPoint | null,
   previousPath: GPSPoint[] = [],
+  recentRawPointsBuffer: GPSPoint[] = [],
   maxSpeedKmH = 250
 ): ValidationResult {
-  // 1. Hard cutoff for poor accuracy (> 20m)
-  if (newPoint.accuracy > 20) {
+  // 1. Hard cutoff for accuracy > 50 meters
+  if (newPoint.accuracy > 50) {
     return {
       isValid: false,
       distanceDelta: 0,
-      reason: `Accuracy poor (${newPoint.accuracy.toFixed(1)}m > 20m limit)`,
+      reason: `Accuracy too low (${newPoint.accuracy.toFixed(1)}m > 50m limit)`,
     };
   }
 
-  // First point always passes initial validation if accuracy <= 20m
+  // First point passes initial validation if accuracy <= 50m
   if (!lastPoint) {
     return { isValid: true, distanceDelta: 0 };
   }
@@ -87,12 +97,12 @@ export function validateGPSPointAdvanced(
     newPoint.longitude
   );
 
-  // 3. Movement threshold: ignore movements smaller than 1.0 meter
-  if (distanceDelta < 1.0) {
+  // 3. Movement threshold: ignore movements smaller than 0.5 meters
+  if (distanceDelta < 0.5) {
     return {
       isValid: false,
       distanceDelta: 0,
-      reason: `Stationary jitter (${distanceDelta.toFixed(2)}m < 1.0m threshold)`,
+      reason: `Stationary jitter (${distanceDelta.toFixed(2)}m < 0.5m threshold)`,
     };
   }
 
@@ -112,18 +122,13 @@ export function validateGPSPointAdvanced(
   }
 
   // 5. Adaptive Accuracy Tiered Filtering
-  // Tier 1: Accuracy < 5m -> Accepted immediately
-  if (newPoint.accuracy < 5) {
-    return { isValid: true, distanceDelta };
-  }
-
-  // Tier 2: Accuracy 5m - 10m -> Requires valid distance & speed (already passed above)
+  // Tier A: Accuracy 0 - 10m -> Accept immediately
   if (newPoint.accuracy <= 10) {
     return { isValid: true, distanceDelta };
   }
 
-  // Tier 3: Accuracy 10m - 20m -> Accept only if movement direction is consistent
-  if (newPoint.accuracy > 10 && newPoint.accuracy <= 20) {
+  // Tier B: Accuracy 10 - 30m -> Accept if movement direction is consistent
+  if (newPoint.accuracy > 10 && newPoint.accuracy <= 30) {
     if (previousPath.length >= 2) {
       const prevPoint = previousPath[previousPath.length - 2];
       const lastPointInPath = previousPath[previousPath.length - 1];
@@ -144,7 +149,6 @@ export function validateGPSPointAdvanced(
 
       const angleDiff = calculateAngleDifference(previousBearing, currentBearing);
 
-      // If directional jump is > 90 degrees with fair accuracy, consider it noise/oscillation
       if (angleDiff > 90) {
         return {
           isValid: false,
@@ -153,6 +157,35 @@ export function validateGPSPointAdvanced(
         };
       }
     }
+    return { isValid: true, distanceDelta };
+  }
+
+  // Tier C: Accuracy 30 - 50m -> Accept only if 3 consecutive points agree
+  if (newPoint.accuracy > 30 && newPoint.accuracy <= 50) {
+    if (recentRawPointsBuffer.length < 2) {
+      return {
+        isValid: false,
+        distanceDelta: 0,
+        reason: `Waiting for 3 consecutive points agreement (${newPoint.accuracy.toFixed(1)}m accuracy)`,
+      };
+    }
+
+    const p1 = recentRawPointsBuffer[recentRawPointsBuffer.length - 2];
+    const p2 = recentRawPointsBuffer[recentRawPointsBuffer.length - 1];
+
+    const d1 = calculateHaversineDistance(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
+    const d2 = calculateHaversineDistance(p2.latitude, p2.longitude, newPoint.latitude, newPoint.longitude);
+
+    // Check if points are in spatial agreement (consistently moving or clustered)
+    if (d1 > 100 || d2 > 100) {
+      return {
+        isValid: false,
+        distanceDelta: 0,
+        reason: `Inconsistent 3-point agreement delta (${d2.toFixed(1)}m)`,
+      };
+    }
+
+    return { isValid: true, distanceDelta };
   }
 
   return { isValid: true, distanceDelta };

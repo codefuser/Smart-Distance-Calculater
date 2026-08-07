@@ -1,13 +1,15 @@
 import React from 'react';
-import { Play, Square, RotateCcw, Compass, Activity, Clock, Gauge, Navigation } from 'lucide-react';
-import { GPSPoint, TrackingStatus, AccuracyQuality } from '../types';
+import { Play, Square, RotateCcw, Compass, Activity, Clock, Gauge, Navigation, Signal } from 'lucide-react';
+import { GPSPoint, TrackingStatus, AccuracyQuality, GPSSignalStatus } from '../types';
 
 interface TrackingControlsProps {
   currentLocation: GPSPoint | null;
   totalDistanceMeters: number;
   elapsedTime: number;
-  gpsAccuracy: number | null;
+  rawAccuracy: number | null;
+  filteredAccuracy: number | null;
   accuracyQuality: AccuracyQuality;
+  gpsSignalStatus: GPSSignalStatus;
   speed: number | null;
   trackingStatus: TrackingStatus;
   startTracking: () => void;
@@ -15,21 +17,15 @@ interface TrackingControlsProps {
   resetTracking: () => void;
 }
 
-// Helper to format elapsed time in HH:MM:SS or MM:SS
 function formatTime(seconds: number): string {
   const hrs = Math.floor(seconds / 3600);
   const mins = Math.floor((seconds % 3600) / 60);
   const secs = seconds % 60;
-
   const pad = (num: number) => num.toString().padStart(2, '0');
-
-  if (hrs > 0) {
-    return `${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
-  }
+  if (hrs > 0) return `${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
   return `${pad(mins)}:${pad(secs)}`;
 }
 
-// Status color helper badge
 function getStatusBadge(status: TrackingStatus) {
   switch (status) {
     case 'tracking':
@@ -60,18 +56,17 @@ function getStatusBadge(status: TrackingStatus) {
   }
 }
 
-// Accuracy quality badge style helper
-function getAccuracyBadge(quality: AccuracyQuality) {
-  switch (quality) {
-    case 'Excellent':
+function getSignalBadge(status: GPSSignalStatus) {
+  switch (status) {
+    case 'Excellent Signal':
       return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
-    case 'Good':
+    case 'Good Signal':
       return 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30';
-    case 'Fair':
+    case 'Weak Signal':
       return 'bg-amber-500/10 text-amber-400 border-amber-500/30';
-    case 'Poor':
+    case 'Searching':
     default:
-      return 'bg-rose-500/10 text-rose-400 border-rose-500/30';
+      return 'bg-slate-500/10 text-slate-400 border-slate-500/30 animate-pulse';
   }
 }
 
@@ -79,8 +74,9 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
   currentLocation,
   totalDistanceMeters,
   elapsedTime,
-  gpsAccuracy,
-  accuracyQuality,
+  rawAccuracy,
+  filteredAccuracy,
+  gpsSignalStatus,
   speed,
   trackingStatus,
   startTracking,
@@ -89,14 +85,13 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
 }) => {
   const isTracking = trackingStatus === 'tracking';
   const statusBadge = getStatusBadge(trackingStatus);
-  const accuracyBadgeClass = getAccuracyBadge(accuracyQuality);
+  const signalBadgeClass = getSignalBadge(gpsSignalStatus);
 
-  // Speed in km/h (speed from geolocation API is in m/s)
   const speedKmH = speed !== null && speed >= 0 ? (speed * 3.6).toFixed(1) : '0.0';
 
   return (
     <div className="w-full space-y-3">
-      {/* 1. Control Buttons */}
+      {/* Control Buttons */}
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={startTracking}
@@ -133,7 +128,7 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
         </button>
       </div>
 
-      {/* 2. Live Information Cards */}
+      {/* Live Information Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         {/* Total Distance */}
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 shadow-sm">
@@ -150,7 +145,7 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
           </div>
         </div>
 
-        {/* Current Coordinates */}
+        {/* Position */}
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 shadow-sm">
           <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400 mb-1">
             <Navigation className="w-3.5 h-3.5 text-cyan-400" />
@@ -164,22 +159,20 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
           </div>
         </div>
 
-        {/* GPS Accuracy & Accuracy Indicator */}
+        {/* Raw & Filtered GPS Accuracy */}
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 shadow-sm">
-          <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400 mb-1">
-            <Compass className="w-3.5 h-3.5 text-indigo-400" />
-            GPS Accuracy
-          </div>
-          <div className="text-base font-bold text-slate-100 truncate">
-            {gpsAccuracy !== null ? `±${gpsAccuracy.toFixed(1)}` : '---'}{' '}
-            <span className="text-xs font-normal text-slate-400">m</span>
-          </div>
-          <div className="mt-1">
-            <span
-              className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold border ${accuracyBadgeClass}`}
-            >
-              {accuracyQuality}
+          <div className="flex items-center justify-between text-xs font-medium text-slate-400 mb-1">
+            <span className="flex items-center gap-1">
+              <Compass className="w-3.5 h-3.5 text-indigo-400" /> GPS Accuracy
             </span>
+          </div>
+          <div className="text-xs space-y-0.5 font-mono">
+            <div className="text-slate-200 font-semibold">
+              Raw: {rawAccuracy !== null ? `±${rawAccuracy.toFixed(1)}m` : '---'}
+            </div>
+            <div className="text-emerald-400">
+              Filtered: {filteredAccuracy !== null ? `±${filteredAccuracy.toFixed(1)}m` : '---'}
+            </div>
           </div>
         </div>
 
@@ -210,14 +203,26 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
           <div className="text-xs text-slate-400">Timer</div>
         </div>
 
-        {/* Tracking Status */}
-        <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 shadow-sm">
-          <div className="text-xs font-medium text-slate-400 mb-1.5">Status</div>
-          <div
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${statusBadge.bg}`}
-          >
-            <span className={`w-2 h-2 rounded-full ${statusBadge.dot}`} />
-            {statusBadge.label}
+        {/* GPS Signal Status & Tracking Status */}
+        <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 shadow-sm flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-slate-400">Signal:</span>
+            <span
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border ${signalBadgeClass}`}
+            >
+              <Signal className="w-3 h-3" />
+              {gpsSignalStatus}
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between pt-1 border-t border-slate-800/80">
+            <span className="text-xs font-medium text-slate-400">Status:</span>
+            <div
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${statusBadge.bg}`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${statusBadge.dot}`} />
+              {statusBadge.label}
+            </div>
           </div>
         </div>
       </div>
