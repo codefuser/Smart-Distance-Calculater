@@ -5,8 +5,8 @@ import {
   computeMovingAverage,
   getAccuracyQuality,
   getGPSSignalStatus,
+  StationaryDetector,
 } from '../utils/gpsFilter';
-import { calculateHaversineDistance } from '../utils/haversine';
 
 export interface UseGeolocationTrackerReturn {
   currentLocation: GPSPoint | null;
@@ -36,6 +36,7 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
   const [elapsedTime, setElapsedTime] = useState<number>(0);
   const [trackingStatus, setTrackingStatus] = useState<TrackingStatus>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [smoothedSpeed, setSmoothedSpeed] = useState<number | null>(null);
 
   // Tracking Refs
   const watchIdRef = useRef<number | null>(null);
@@ -43,6 +44,7 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
   const acceptedPointsRef = useRef<GPSPoint[]>([]);
   const smoothedPathRef = useRef<GPSPoint[]>([]);
   const recentRawPointsBufferRef = useRef<GPSPoint[]>([]);
+  const stationaryDetectorRef = useRef<StationaryDetector>(new StationaryDetector());
 
   // Position Handler
   const handlePositionUpdate = useCallback((position: GeolocationPosition) => {
@@ -71,7 +73,7 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     if (validation.isValid) {
       acceptedPointsRef.current.push(freshPoint);
 
-      // Smooth coordinates using 5-point moving average
+      // Smooth coordinates using 5-point moving average for DISPLAY LOCATION
       const smoothedPoint = computeMovingAverage(acceptedPointsRef.current, 5);
       setCurrentLocation(smoothedPoint);
 
@@ -81,27 +83,23 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
         return prevStart;
       });
 
-      // Calculate distance increment using smoothed coordinates
-      const lastSmoothed = smoothedPathRef.current[smoothedPathRef.current.length - 1];
-      let distanceIncrement = 0;
+      // Pass smoothed point into Stationary Detector State Machine
+      const motion = stationaryDetectorRef.current.processPoint(smoothedPoint);
 
-      if (lastSmoothed) {
-        distanceIncrement = calculateHaversineDistance(
-          lastSmoothed.latitude,
-          lastSmoothed.longitude,
-          smoothedPoint.latitude,
-          smoothedPoint.longitude
-        );
+      // Update speed display (0 km/h when stationary)
+      setSmoothedSpeed(motion.displaySpeed);
+
+      // Only accumulate distance and update path for VERIFIED MOVEMENT points
+      if (motion.isVerifiedMovement) {
+        if (motion.distanceDelta > 0) {
+          setTotalDistanceMeters((prevDist) => prevDist + motion.distanceDelta);
+        }
+
+        // Update distance path and last verified location
+        smoothedPathRef.current.push(smoothedPoint);
+        setLastLocation(smoothedPoint);
+        setPath([...smoothedPathRef.current]);
       }
-
-      if (distanceIncrement > 0) {
-        setTotalDistanceMeters((prevDist) => prevDist + distanceIncrement);
-      }
-
-      // Update path and last location
-      smoothedPathRef.current.push(smoothedPoint);
-      setLastLocation(smoothedPoint);
-      setPath([...smoothedPathRef.current]);
     }
   }, []);
 
@@ -175,11 +173,13 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     setTotalDistanceMeters(0);
     setElapsedTime(0);
     setErrorMessage(null);
+    setSmoothedSpeed(null);
     setTrackingStatus('idle');
 
     acceptedPointsRef.current = [];
     smoothedPathRef.current = [];
     recentRawPointsBufferRef.current = [];
+    stationaryDetectorRef.current.reset();
   }, [stopTracking]);
 
   useEffect(() => {
@@ -196,7 +196,7 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
   const gpsAccuracy = currentLocation ? currentLocation.accuracy : null;
   const accuracyQuality = getAccuracyQuality(gpsAccuracy);
   const gpsSignalStatus = getGPSSignalStatus(gpsAccuracy);
-  const speed = currentLocation ? currentLocation.speed ?? null : null;
+  const speed = smoothedSpeed !== null ? smoothedSpeed : (currentLocation ? currentLocation.speed ?? null : null);
 
   return {
     currentLocation,
@@ -216,3 +216,4 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     resetTracking,
   };
 }
+

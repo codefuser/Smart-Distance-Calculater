@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { MapContainer, TileLayer, Marker, Polyline, useMap, useMapEvents, Popup } from 'react-leaflet';
 import L from 'leaflet';
+import 'leaflet-rotate';
 import { GPSPoint, TrackingStatus, GPSSignalStatus } from '../types';
 import { calculateBearing } from '../utils/haversine';
 import { Layers, Navigation as NavigationIcon, Compass, ZoomIn, Eye, Activity, ShieldCheck, MapPin, RotateCw, Plus, Minus } from 'lucide-react';
@@ -23,6 +24,7 @@ interface MapStyleConfig {
   name: string;
   url: string;
   attribution: string;
+  maxNativeZoom: number;
   maxZoom: number;
 }
 
@@ -31,31 +33,36 @@ const MAP_STYLES: Record<MapStyleKey, MapStyleConfig> = {
     name: 'OpenStreetMap',
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    maxZoom: 19,
+    maxNativeZoom: 19,
+    maxZoom: 24,
   },
   carto_dark: {
     name: 'Carto Dark',
     url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    maxZoom: 20,
+    maxNativeZoom: 20,
+    maxZoom: 24,
   },
   esri_satellite: {
     name: 'Esri Satellite',
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attribution: 'Tiles &copy; Esri &mdash; Source: Esri',
-    maxZoom: 18,
+    maxNativeZoom: 19,
+    maxZoom: 24,
   },
   opentopo: {
     name: 'OpenTopo Terrain',
     url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
     attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    maxZoom: 17,
+    maxNativeZoom: 17,
+    maxZoom: 24,
   },
   carto_voyager: {
     name: 'Carto Voyager',
     url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    maxZoom: 20,
+    maxNativeZoom: 20,
+    maxZoom: 24,
   },
 };
 
@@ -74,10 +81,10 @@ function createNavigationArrowIcon(heading: number, counterRotation: number) {
   });
 }
 
-function createFlagIcon(flagEmoji: string, bgClass: string, counterRotation: number) {
+function createFlagIcon(flagEmoji: string, bgClass: string) {
   return L.divIcon({
     className: 'custom-flag-marker',
-    html: `<div style="transform: rotate(${counterRotation}deg);" class="flex items-center justify-center w-8 h-8 rounded-full ${bgClass} border-2 border-white shadow-xl text-white font-bold text-sm">
+    html: `<div class="flex items-center justify-center w-8 h-8 rounded-full ${bgClass} border-2 border-white shadow-xl text-white font-bold text-sm">
           ${flagEmoji}
         </div>`,
     iconSize: [32, 32],
@@ -85,8 +92,8 @@ function createFlagIcon(flagEmoji: string, bgClass: string, counterRotation: num
   });
 }
 
-const startFlagIcon = (counterRot: number) => createFlagIcon('🚩', 'bg-emerald-600', counterRot);
-const endFlagIcon = (counterRot: number) => createFlagIcon('🏁', 'bg-rose-600', counterRot);
+const startFlagIcon = createFlagIcon('🚩', 'bg-emerald-600');
+const endFlagIcon = createFlagIcon('🏁', 'bg-rose-600');
 
 interface POIItem {
   id: number;
@@ -100,10 +107,27 @@ interface POIItem {
 function MapEventsHandler({
   onUserDrag,
   onZoomChange,
+  onRotateChange,
 }: {
   onUserDrag: () => void;
   onZoomChange: (zoom: number) => void;
+  onRotateChange: (bearing: number) => void;
 }) {
+  const map = useMap();
+
+  useEffect(() => {
+    const handleRotate = () => {
+      if ((map as any).getBearing) {
+        onRotateChange((map as any).getBearing());
+      }
+    };
+
+    map.on('rotate', handleRotate);
+    return () => {
+      map.off('rotate', handleRotate);
+    };
+  }, [map, onRotateChange]);
+
   useMapEvents({
     dragstart: () => {
       onUserDrag();
@@ -134,22 +158,6 @@ function AutoFollowController({
       });
     }
   }, [position, autoFollow, map]);
-
-  return null;
-}
-
-// Custom Map Pane Rotation Controller
-function MapRotationController({ rotationDeg }: { rotationDeg: number }) {
-  const map = useMap();
-
-  useEffect(() => {
-    const pane = map.getPane('mapPane');
-    if (pane) {
-      pane.style.transformOrigin = 'center center';
-      pane.style.transition = 'transform 0.3s ease-out';
-      pane.style.transform = `rotate(${rotationDeg}deg)`;
-    }
-  }, [rotationDeg, map]);
 
   return null;
 }
@@ -197,7 +205,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
 
   const activePoint = currentLocation || startLocation;
 
-  // Heading Calculation
+  // Heading Calculation & Auto Rotate
   const prevPointRef = useRef<GPSPoint | null>(null);
   useEffect(() => {
     if (activePoint && prevPointRef.current) {
@@ -215,9 +223,9 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         setHeading(newHeading);
         prevPointRef.current = activePoint;
 
-        // If Auto Rotate is ON, update map rotation underneath heading
-        if (autoRotate) {
-          setMapRotation(-newHeading);
+        // If Auto Rotate is ON, update map bearing natively underneath heading
+        if (autoRotate && mapRef.current && (mapRef.current as any).setBearing) {
+          (mapRef.current as any).setBearing(-newHeading);
         }
       }
     } else if (activePoint) {
@@ -237,8 +245,8 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         compassHeading = (360 - e.alpha) % 360;
       }
 
-      if (compassHeading !== null) {
-        setMapRotation(-compassHeading);
+      if (compassHeading !== null && mapRef.current && (mapRef.current as any).setBearing) {
+        (mapRef.current as any).setBearing(-compassHeading);
       }
     };
 
@@ -251,6 +259,9 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   // Reset North (0°)
   const handleResetNorth = useCallback(() => {
     setAutoRotate(false);
+    if (mapRef.current && (mapRef.current as any).setBearing) {
+      (mapRef.current as any).setBearing(0);
+    }
     setMapRotation(0);
   }, []);
 
@@ -326,11 +337,12 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   }
 
   const speedKmH = speed !== null && speed >= 0 ? (speed * 3.6).toFixed(1) : '0.0';
+  const displayRotation = Math.round(mapRotation);
 
   return (
     <div className="w-full h-full min-h-[320px] rounded-xl overflow-hidden border border-slate-800 relative shadow-2xl bg-slate-950">
       {/* ---------------------------------------------------------------- */}
-      {/* 1. TOP LEFT: Live Distance, Speed & GPS Accuracy Chips (Gap 12px) */}
+      {/* 1. TOP LEFT: Live Distance, Speed & GPS Accuracy Chips           */}
       {/* ---------------------------------------------------------------- */}
       <div className="absolute top-3 left-3 z-[400] flex flex-wrap items-center gap-3 pointer-events-none">
         <div className="bg-slate-950/85 backdrop-blur-md border border-slate-800 text-slate-100 text-[11px] font-semibold px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-lg">
@@ -406,7 +418,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           onClick={() => {
             const nextVal = !autoRotate;
             setAutoRotate(nextVal);
-            if (!nextVal) setMapRotation(0);
+            if (!nextVal) handleResetNorth();
           }}
           className={`text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-2 border shadow-xl backdrop-blur-sm transition-all ${
             autoRotate
@@ -431,13 +443,13 @@ export const LiveMap: React.FC<LiveMapProps> = ({
             <Compass className="w-4 h-4 text-cyan-400" />
           </div>
           <span className="hidden sm:inline">
-            {mapRotation === 0 ? 'North' : `${Math.abs(Math.round(mapRotation))}°`}
+            {displayRotation === 0 ? 'North' : `${Math.abs(displayRotation)}°`}
           </span>
         </button>
       </div>
 
       {/* ---------------------------------------------------------------- */}
-      {/* 3. BOTTOM RIGHT: Re-center & Zoom Level Indicator (Gap 12px)     */}
+      {/* 3. BOTTOM RIGHT: Re-center & Zoom Level Indicator                */}
       {/* ---------------------------------------------------------------- */}
       <div className="absolute bottom-4 right-3 z-[400] flex flex-col items-end gap-3">
         {/* Re-center Button */}
@@ -467,7 +479,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       </div>
 
       {/* ---------------------------------------------------------------- */}
-      {/* 4. BOTTOM LEFT: Zoom (+ / -) Control Buttons (Gap 12px)           */}
+      {/* 4. BOTTOM LEFT: Zoom (+ / -) Control Buttons                     */}
       {/* ---------------------------------------------------------------- */}
       <div className="absolute bottom-4 left-3 z-[400] flex flex-col gap-2">
         <button
@@ -491,31 +503,36 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       </div>
 
       {/* ---------------------------------------------------------------- */}
-      {/* Leaflet Map Engine Container                                     */}
+      {/* Leaflet Map Engine Container with leaflet-rotate support         */}
       {/* ---------------------------------------------------------------- */}
       <MapContainer
         ref={mapRef}
         center={defaultCenter}
         zoom={18}
+        minZoom={1}
+        maxZoom={24}
         zoomControl={false}
         scrollWheelZoom={true}
+        rotate={true}
+        touchRotate={true}
+        rotateControl={false}
         className="w-full h-full"
       >
         <TileLayer
           key={selectedStyleKey}
           attribution={currentStyleConfig.attribution}
           url={currentStyleConfig.url}
+          maxNativeZoom={currentStyleConfig.maxNativeZoom}
           maxZoom={currentStyleConfig.maxZoom}
         />
 
         <MapEventsHandler
           onUserDrag={() => setAutoFollow(false)}
           onZoomChange={(zoom) => setCurrentZoom(zoom)}
+          onRotateChange={(bearing) => setMapRotation(bearing)}
         />
 
         <AutoFollowController position={currentMarkerPosition} autoFollow={autoFollow} />
-
-        <MapRotationController rotationDeg={mapRotation} />
 
         {/* Travel Path Polyline */}
         {polylinePositions.length > 1 && (
@@ -535,7 +552,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         {startLocation && (
           <Marker
             position={[startLocation.latitude, startLocation.longitude]}
-            icon={startFlagIcon(-mapRotation)}
+            icon={startFlagIcon}
           >
             <Popup>
               <div className="text-xs font-bold text-emerald-600">Start Point</div>
@@ -547,7 +564,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         {endLocation && trackingStatus === 'stopped' && (
           <Marker
             position={[endLocation.latitude, endLocation.longitude]}
-            icon={endFlagIcon(-mapRotation)}
+            icon={endFlagIcon}
           >
             <Popup>
               <div className="text-xs font-bold text-rose-600">End Point</div>
@@ -566,12 +583,16 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         {/* Nearby POIs */}
         {currentZoom >= 16 &&
           pois.map((poi) => (
-            <Marker key={`poi_${poi.id}`} position={[poi.lat, poi.lon]} icon={L.divIcon({
-              className: 'custom-poi-marker',
-              html: `<div style="transform: rotate(${-mapRotation}deg);" class="w-6 h-6 rounded-full bg-amber-500/90 border border-amber-200 flex items-center justify-center text-[10px] shadow text-slate-950 font-bold">📍</div>`,
-              iconSize: [24, 24],
-              iconAnchor: [12, 12],
-            })}>
+            <Marker
+              key={`poi_${poi.id}`}
+              position={[poi.lat, poi.lon]}
+              icon={L.divIcon({
+                className: 'custom-poi-marker',
+                html: `<div class="w-6 h-6 rounded-full bg-amber-500/90 border border-amber-200 flex items-center justify-center text-[10px] shadow text-slate-950 font-bold">📍</div>`,
+                iconSize: [24, 24],
+                iconAnchor: [12, 12],
+              })}
+            >
               <Popup>
                 <div className="text-xs">
                   <div className="font-bold text-slate-800">{poi.name}</div>

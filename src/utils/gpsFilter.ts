@@ -190,3 +190,222 @@ export function validateGPSPointAdvanced(
 
   return { isValid: true, distanceDelta };
 }
+
+export interface MotionAnalysis {
+  isStationary: boolean;
+  isVerifiedMovement: boolean;
+  distanceDelta: number;
+  displaySpeed: number | null;
+}
+
+export class StationaryDetector {
+  private isStationary: boolean = false;
+  private stationaryAnchor: GPSPoint | null = null;
+  private lastVerifiedPoint: GPSPoint | null = null;
+  private rollingWindow: GPSPoint[] = [];
+  private consecutiveLowMotionCount: number = 0;
+  private consecutiveHighMotionCount: number = 0;
+  private isDeviceMotionActive: boolean = false;
+  private motionVariance: number = 0;
+
+  constructor() {
+    this.initDeviceMotion();
+  }
+
+  private initDeviceMotion() {
+    if (typeof window !== 'undefined' && 'DeviceMotionEvent' in window) {
+      try {
+        const lastAccels: number[] = [];
+        window.addEventListener(
+          'devicemotion',
+          (e) => {
+            const acc = e.acceleration || e.accelerationIncludingGravity;
+            if (acc) {
+              const mag = Math.sqrt(
+                (acc.x || 0) ** 2 + (acc.y || 0) ** 2 + (acc.z || 0) ** 2
+              );
+              lastAccels.push(mag);
+              if (lastAccels.length > 20) lastAccels.shift();
+              const mean = lastAccels.reduce((a, b) => a + b, 0) / lastAccels.length;
+              this.motionVariance =
+                lastAccels.reduce((sum, v) => sum + (v - mean) ** 2, 0) /
+                lastAccels.length;
+              this.isDeviceMotionActive = true;
+            }
+          },
+          { passive: true }
+        );
+      } catch {
+        // DeviceMotion not permitted or unavailable
+      }
+    }
+  }
+
+  public reset() {
+    this.isStationary = false;
+    this.stationaryAnchor = null;
+    this.lastVerifiedPoint = null;
+    this.rollingWindow = [];
+    this.consecutiveLowMotionCount = 0;
+    this.consecutiveHighMotionCount = 0;
+  }
+
+  public processPoint(point: GPSPoint): MotionAnalysis {
+    this.rollingWindow.push(point);
+    if (this.rollingWindow.length > 8) {
+      this.rollingWindow.shift();
+    }
+
+    if (!this.lastVerifiedPoint) {
+      this.lastVerifiedPoint = point;
+      this.stationaryAnchor = point;
+      return {
+        isStationary: false,
+        isVerifiedMovement: true,
+        distanceDelta: 0,
+        displaySpeed: point.speed ?? 0,
+      };
+    }
+
+    const prevPoint =
+      this.rollingWindow[this.rollingWindow.length - 2] || this.lastVerifiedPoint;
+
+    const stepDist = calculateHaversineDistance(
+      prevPoint.latitude,
+      prevPoint.longitude,
+      point.latitude,
+      point.longitude
+    );
+
+    const timeDeltaSec = Math.max((point.timestamp - prevPoint.timestamp) / 1000, 0.5);
+    const stepSpeedMps = stepDist / timeDeltaSec;
+    const reportedSpeedMps =
+      point.speed !== undefined && point.speed !== null && point.speed >= 0
+        ? point.speed
+        : null;
+
+    const effectiveSpeedMps = reportedSpeedMps !== null ? reportedSpeedMps : stepSpeedMps;
+
+    const anchorPoint = this.stationaryAnchor || this.lastVerifiedPoint;
+    const distFromAnchor = calculateHaversineDistance(
+      anchorPoint.latitude,
+      anchorPoint.longitude,
+      point.latitude,
+      point.longitude
+    );
+
+    let netDisplacement = 0;
+    let grossDistance = 0;
+    if (this.rollingWindow.length >= 3) {
+      const firstW = this.rollingWindow[0];
+      const lastW = this.rollingWindow[this.rollingWindow.length - 1];
+      netDisplacement = calculateHaversineDistance(
+        firstW.latitude,
+        firstW.longitude,
+        lastW.latitude,
+        lastW.longitude
+      );
+      for (let i = 1; i < this.rollingWindow.length; i++) {
+        grossDistance += calculateHaversineDistance(
+          this.rollingWindow[i - 1].latitude,
+          this.rollingWindow[i - 1].longitude,
+          this.rollingWindow[i].latitude,
+          this.rollingWindow[i].longitude
+        );
+      }
+    }
+
+    const displacementRatio = grossDistance > 0.5 ? netDisplacement / grossDistance : 0;
+
+    // Evaluate signals
+    const lowMotionSensors = this.isDeviceMotionActive && this.motionVariance < 0.1;
+    const isLowMotionSample =
+      lowMotionSensors ||
+      effectiveSpeedMps < 0.45 ||
+      stepDist < 1.0 ||
+      (displacementRatio < 0.35 && stepDist < 2.0);
+
+    const isHighMotionSample =
+      effectiveSpeedMps >= 0.8 ||
+      (distFromAnchor > Math.max(3.0, point.accuracy * 0.4) && stepDist >= 1.0) ||
+      (stepDist >= 2.0 && displacementRatio > 0.6);
+
+    if (this.isStationary) {
+      if (isHighMotionSample) {
+        this.consecutiveHighMotionCount++;
+        this.consecutiveLowMotionCount = 0;
+      } else {
+        this.consecutiveHighMotionCount = 0;
+      }
+
+      if (this.consecutiveHighMotionCount >= 2 || distFromAnchor > 4.5) {
+        this.isStationary = false;
+        this.consecutiveHighMotionCount = 0;
+        this.consecutiveLowMotionCount = 0;
+
+        const verifiedDelta = calculateHaversineDistance(
+          this.stationaryAnchor!.latitude,
+          this.stationaryAnchor!.longitude,
+          point.latitude,
+          point.longitude
+        );
+
+        this.lastVerifiedPoint = point;
+        this.stationaryAnchor = null;
+
+        return {
+          isStationary: false,
+          isVerifiedMovement: true,
+          distanceDelta: verifiedDelta,
+          displaySpeed: effectiveSpeedMps,
+        };
+      } else {
+        return {
+          isStationary: true,
+          isVerifiedMovement: false,
+          distanceDelta: 0,
+          displaySpeed: 0,
+        };
+      }
+    } else {
+      if (isLowMotionSample) {
+        this.consecutiveLowMotionCount++;
+        this.consecutiveHighMotionCount = 0;
+      } else {
+        this.consecutiveLowMotionCount = 0;
+        this.consecutiveHighMotionCount++;
+      }
+
+      if (this.consecutiveLowMotionCount >= 3) {
+        this.isStationary = true;
+        this.stationaryAnchor = this.lastVerifiedPoint || point;
+        this.consecutiveLowMotionCount = 0;
+        this.consecutiveHighMotionCount = 0;
+
+        return {
+          isStationary: true,
+          isVerifiedMovement: false,
+          distanceDelta: 0,
+          displaySpeed: 0,
+        };
+      } else {
+        const verifiedDelta = calculateHaversineDistance(
+          this.lastVerifiedPoint.latitude,
+          this.lastVerifiedPoint.longitude,
+          point.latitude,
+          point.longitude
+        );
+
+        this.lastVerifiedPoint = point;
+
+        return {
+          isStationary: false,
+          isVerifiedMovement: true,
+          distanceDelta: verifiedDelta,
+          displaySpeed: effectiveSpeedMps,
+        };
+      }
+    }
+  }
+}
+
