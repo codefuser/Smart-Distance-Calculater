@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useGeolocationTracker } from './hooks/useGeolocationTracker';
+import { useCompassHeading } from './hooks/useCompassHeading';
 import { LiveMap } from './components/LiveMap';
 import { TrackingControls } from './components/TrackingControls';
 import { SessionHistory } from './components/SessionHistory';
+import { RouteSummaryModal } from './components/RouteSummaryModal';
 import { MeasurementSession } from './types';
 import {
   getSavedSessions,
@@ -19,6 +21,14 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('tracker');
   const [sessions, setSessions] = useState<MeasurementSession[]>([]);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [summarySession, setSummarySession] = useState<MeasurementSession | null>(null);
+
+  const {
+    headingAngle,
+    cardinalDirection,
+    needsPermission: compassNeedsPermission,
+    requestCompassPermission: onRequestCompassPermission,
+  } = useCompassHeading();
 
   const {
     currentLocation,
@@ -26,6 +36,8 @@ export default function App() {
     path,
     marks,
     totalDistanceMeters,
+    straightLineDistanceMeters,
+    directionalDistances,
     elapsedTime,
     gpsAccuracy,
     accuracyQuality,
@@ -48,15 +60,18 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (trackingStatus === 'tracking' && prevStatusRef.current !== 'tracking') {
+    if (
+      (trackingStatus === 'initializing' || trackingStatus === 'tracking') &&
+      prevStatusRef.current !== 'initializing' &&
+      prevStatusRef.current !== 'tracking'
+    ) {
       startTimeRef.current = Date.now();
     }
 
     if (
-      prevStatusRef.current === 'tracking' &&
+      (prevStatusRef.current === 'tracking' || prevStatusRef.current === 'initializing') &&
       trackingStatus === 'stopped' &&
-      path.length > 0 &&
-      totalDistanceMeters > 0
+      path.length > 0
     ) {
       const newSession = buildMeasurementSession(
         path,
@@ -65,12 +80,16 @@ export default function App() {
         startTimeRef.current,
         marks
       );
+      newSession.straightLineDistanceMeters = straightLineDistanceMeters;
+      newSession.directionalDistances = directionalDistances;
+
       saveSession(newSession);
       setSessions(getSavedSessions());
+      setSummarySession(newSession);
     }
 
     prevStatusRef.current = trackingStatus;
-  }, [trackingStatus, path, totalDistanceMeters, elapsedTime, marks]);
+  }, [trackingStatus, path, totalDistanceMeters, straightLineDistanceMeters, directionalDistances, elapsedTime, marks]);
 
   const handleStopTracking = useCallback(() => {
     stopTracking();
@@ -91,8 +110,8 @@ export default function App() {
   }, []);
 
   const handleAddMark = useCallback(() => {
-    addMark();
-  }, [addMark]);
+    addMark(undefined, headingAngle ?? undefined, cardinalDirection);
+  }, [addMark, headingAngle, cardinalDirection]);
 
   return (
     <main className="w-screen h-screen bg-slate-950 p-2 sm:p-4 flex flex-col gap-3 overflow-hidden">
@@ -137,11 +156,15 @@ export default function App() {
           <TrackingControls
             currentLocation={currentLocation}
             totalDistanceMeters={totalDistanceMeters}
+            straightLineDistanceMeters={straightLineDistanceMeters}
+            directionalDistances={directionalDistances}
             elapsedTime={elapsedTime}
             gpsAccuracy={gpsAccuracy}
             accuracyQuality={accuracyQuality}
             gpsSignalStatus={gpsSignalStatus}
             speed={speed}
+            headingAngle={headingAngle}
+            cardinalDirection={cardinalDirection}
             trackingStatus={trackingStatus}
             marks={marks}
             startTracking={startTracking}
@@ -163,12 +186,16 @@ export default function App() {
               totalDistanceMeters={totalDistanceMeters}
               gpsAccuracy={gpsAccuracy}
               speed={speed}
+              headingAngle={headingAngle}
+              cardinalDirection={cardinalDirection}
               gpsSignalStatus={gpsSignalStatus}
               trackingStatus={trackingStatus}
               errorMessage={errorMessage}
               onAddMark={handleAddMark}
               isFullscreen={isFullscreen}
               onToggleFullscreen={handleToggleFullscreen}
+              compassNeedsPermission={compassNeedsPermission}
+              onRequestCompassPermission={onRequestCompassPermission}
             />
           </div>
         </div>
@@ -180,6 +207,14 @@ export default function App() {
             onClearAllSessions={handleClearAllSessions}
           />
         </div>
+      )}
+
+      {/* Post-Session Route Summary Modal */}
+      {summarySession && (
+        <RouteSummaryModal
+          session={summarySession}
+          onClose={() => setSummarySession(null)}
+        />
       )}
     </main>
   );

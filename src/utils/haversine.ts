@@ -60,3 +60,32 @@ export function calculateAngleDifference(bearing1: number, bearing2: number): nu
   const diff = Math.abs(bearing1 - bearing2) % 360;
   return diff > 180 ? 360 - diff : diff;
 }
+
+/**
+ * Converts a compass heading angle (0-360 degrees) to an 8-point cardinal direction string.
+ */
+export function getCardinalDirection(bearing: number): string {
+  const normalized = (bearing % 360 + 360) % 360;
+  const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  const index = Math.round(normalized / 45) % 8;
+  return directions[index];
+}
+
+/**
+ * Decomposes a movement vector (distance and bearing) into North, East, South, and West distance components.
+ */
+export function decomposeVector(
+  distanceMeters: number,
+  bearingDegrees: number
+): { north: number; east: number; south: number; west: number } {
+  const rad = (bearingDegrees * Math.PI) / 180;
+  const northComponent = distanceMeters * Math.cos(rad);
+  const eastComponent = distanceMeters * Math.sin(rad);
+
+  return {
+    north: northComponent > 0 ? northComponent : 0,
+    south: northComponent < 0 ? Math.abs(northComponent) : 0,
+    east: eastComponent > 0 ? eastComponent : 0,
+    west: eastComponent < 0 ? Math.abs(eastComponent) : 0,
+  };
+}

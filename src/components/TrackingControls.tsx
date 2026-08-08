@@ -1,15 +1,19 @@
 import React, { useState } from 'react';
-import { Play, Square, RotateCcw, Compass, Activity, Clock, Gauge, Navigation, Signal, BookmarkPlus, Maximize2, Minimize2, Tag, Edit2, Check } from 'lucide-react';
-import { GPSPoint, TrackingStatus, AccuracyQuality, GPSSignalStatus, RouteMark } from '../types';
+import { Play, Square, RotateCcw, Compass, Activity, Clock, Gauge, Signal, BookmarkPlus, Maximize2, Minimize2, Tag, Edit2, Check, ArrowUpRight } from 'lucide-react';
+import { GPSPoint, TrackingStatus, AccuracyQuality, GPSSignalStatus, RouteMark, DirectionalDistances } from '../types';
 
 interface TrackingControlsProps {
   currentLocation: GPSPoint | null;
   totalDistanceMeters: number;
+  straightLineDistanceMeters?: number;
+  directionalDistances?: DirectionalDistances;
   elapsedTime: number;
   gpsAccuracy: number | null;
   accuracyQuality: AccuracyQuality;
   gpsSignalStatus: GPSSignalStatus;
   speed: number | null;
+  headingAngle?: number | null;
+  cardinalDirection?: string;
   trackingStatus: TrackingStatus;
   marks?: RouteMark[];
   startTracking: () => void;
@@ -32,6 +36,12 @@ function formatTime(seconds: number): string {
 
 function getStatusBadge(status: TrackingStatus) {
   switch (status) {
+    case 'initializing':
+      return {
+        label: 'Initializing',
+        bg: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30',
+        dot: 'bg-cyan-400 animate-ping',
+      };
     case 'tracking':
       return {
         label: 'Tracking',
@@ -75,13 +85,17 @@ function getSignalBadge(status: GPSSignalStatus) {
 }
 
 export const TrackingControls: React.FC<TrackingControlsProps> = ({
-  currentLocation,
+  currentLocation: _currentLocation,
   totalDistanceMeters,
+  straightLineDistanceMeters = 0,
+  directionalDistances = { north: 0, east: 0, south: 0, west: 0 },
   elapsedTime,
   gpsAccuracy,
-  accuracyQuality,
+  accuracyQuality: _accuracyQuality,
   gpsSignalStatus,
   speed,
+  headingAngle = null,
+  cardinalDirection = 'N',
   trackingStatus,
   marks = [],
   startTracking,
@@ -92,7 +106,7 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
   onToggleFullscreen,
   isFullscreen = false,
 }) => {
-  const isTracking = trackingStatus === 'tracking';
+  const isTracking = trackingStatus === 'tracking' || trackingStatus === 'initializing';
   const statusBadge = getStatusBadge(trackingStatus);
   const signalBadgeClass = getSignalBadge(gpsSignalStatus);
   const speedKmH = speed !== null && speed >= 0 ? (speed * 3.6).toFixed(1) : '0.0';
@@ -126,15 +140,15 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
           }`}
         >
           <Play className="w-4 h-4 fill-current" />
-          Start Tracking
+          {trackingStatus === 'initializing' ? 'Initializing GPS...' : 'Start Tracking'}
         </button>
 
         {onAddMark && (
           <button
             onClick={onAddMark}
-            disabled={!isTracking}
+            disabled={trackingStatus !== 'tracking'}
             className={`inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-lg font-bold text-xs sm:text-sm transition-all shadow-md ${
-              !isTracking
+              trackingStatus !== 'tracking'
                 ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
                 : 'bg-amber-500 hover:bg-amber-400 text-slate-950 border border-amber-400 active:scale-[0.98]'
             }`}
@@ -180,7 +194,7 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
 
       {/* Live Information Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-        {/* Total Distance */}
+        {/* Total Travel Distance */}
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 shadow-sm">
           <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400 mb-1">
             <Activity className="w-3.5 h-3.5 text-emerald-400" />
@@ -190,22 +204,22 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
             {totalDistanceMeters.toFixed(2)}{' '}
             <span className="text-xs font-normal text-slate-400">m</span>
           </div>
-          <div className="text-xs text-slate-400 truncate">
-            {(totalDistanceMeters / 1000).toFixed(3)} km
+          <div className="text-[11px] text-slate-400 truncate">
+            Straight-line: {straightLineDistanceMeters.toFixed(1)}m
           </div>
         </div>
 
-        {/* Position */}
+        {/* Directional Distances (N/E/S/W) */}
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 shadow-sm">
           <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400 mb-1">
-            <Navigation className="w-3.5 h-3.5 text-cyan-400" />
-            Position (Lat / Lng)
+            <ArrowUpRight className="w-3.5 h-3.5 text-amber-400" />
+            Vectors (N/E/S/W)
           </div>
-          <div className="text-xs font-mono font-semibold text-slate-200 truncate">
-            {currentLocation ? currentLocation.latitude.toFixed(6) : '---'}
-          </div>
-          <div className="text-xs font-mono text-slate-400 truncate">
-            {currentLocation ? currentLocation.longitude.toFixed(6) : '---'}
+          <div className="text-xs font-mono font-semibold text-slate-200 grid grid-cols-2 gap-x-1 truncate">
+            <span>N: {directionalDistances.north.toFixed(1)}m</span>
+            <span>E: {directionalDistances.east.toFixed(1)}m</span>
+            <span>S: {directionalDistances.south.toFixed(1)}m</span>
+            <span>W: {directionalDistances.west.toFixed(1)}m</span>
           </div>
         </div>
 
@@ -213,13 +227,15 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 shadow-sm">
           <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400 mb-1">
             <Compass className="w-3.5 h-3.5 text-indigo-400" />
-            GPS Accuracy
+            Compass / Heading
           </div>
-          <div className="text-base font-bold text-slate-100 truncate">
-            {gpsAccuracy !== null ? `±${gpsAccuracy.toFixed(1)}` : '---'}{' '}
-            <span className="text-xs font-normal text-slate-400">m</span>
+          <div className="text-base font-bold text-slate-100 truncate font-mono">
+            {cardinalDirection}{' '}
+            <span className="text-xs font-normal text-slate-400">
+              {headingAngle !== null ? `(${headingAngle}°)` : '---'}
+            </span>
           </div>
-          <div className="text-xs text-slate-400 font-semibold">{accuracyQuality}</div>
+          <div className="text-xs text-slate-400">Accuracy: ±{gpsAccuracy?.toFixed(1) ?? '--'}m</div>
         </div>
 
         {/* Current Speed */}

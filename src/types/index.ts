@@ -19,10 +19,13 @@ export interface RouteMark {
   longitude: number;
   speedKmH: number;
   accuracyMeters: number;
+  headingAngle?: number;
+  cardinalDirection?: string;
+  segmentBearing?: number;
   note?: string;
 }
 
-export type TrackingStatus = 'idle' | 'tracking' | 'paused' | 'stopped' | 'error';
+export type TrackingStatus = 'idle' | 'initializing' | 'tracking' | 'paused' | 'stopped' | 'error';
 
 export type AccuracyQuality = 'Excellent' | 'Good' | 'Fair' | 'Poor';
 
@@ -34,6 +37,13 @@ export interface DistanceMetrics {
   kilometers: number;
 }
 
+export interface DirectionalDistances {
+  north: number;
+  east: number;
+  south: number;
+  west: number;
+}
+
 export interface MeasurementSession {
   id: string;
   name: string;
@@ -42,6 +52,8 @@ export interface MeasurementSession {
   endTime: number;
   durationSeconds: number;
   totalDistanceMeters: number;
+  straightLineDistanceMeters?: number;
+  directionalDistances?: DirectionalDistances;
   totalDistanceKm: number;
   averageAccuracyMeters: number;
   averageSpeedKmH: number;

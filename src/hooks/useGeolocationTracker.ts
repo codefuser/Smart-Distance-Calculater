@@ -1,11 +1,12 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { GPSPoint, TrackingStatus, AccuracyQuality, GPSSignalStatus, RouteMark } from '../types';
+import { GPSPoint, TrackingStatus, AccuracyQuality, GPSSignalStatus, RouteMark, DirectionalDistances } from '../types';
 import {
   validateGPSPointAdvanced,
   getAccuracyQuality,
   getGPSSignalStatus,
   StationaryDetector,
 } from '../utils/gpsFilter';
+import { calculateHaversineDistance, calculateBearing, decomposeVector } from '../utils/haversine';
 
 export interface UseGeolocationTrackerReturn {
   currentLocation: GPSPoint | null;
@@ -14,6 +15,8 @@ export interface UseGeolocationTrackerReturn {
   path: GPSPoint[];
   marks: RouteMark[];
   totalDistanceMeters: number;
+  straightLineDistanceMeters: number;
+  directionalDistances: DirectionalDistances;
   elapsedTime: number;
   gpsAccuracy: number | null;
   accuracyQuality: AccuracyQuality;
@@ -24,7 +27,7 @@ export interface UseGeolocationTrackerReturn {
   startTracking: () => void;
   stopTracking: () => void;
   resetTracking: () => void;
-  addMark: (note?: string) => RouteMark | null;
+  addMark: (note?: string, headingAngle?: number, cardinalDir?: string) => RouteMark | null;
   updateMarkNote: (id: string, note: string) => void;
 }
 
@@ -36,6 +39,13 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
   const [path, setPath] = useState<GPSPoint[]>([]);
   const [marks, setMarks] = useState<RouteMark[]>([]);
   const [totalDistanceMeters, setTotalDistanceMeters] = useState<number>(0);
+  const [straightLineDistanceMeters, setStraightLineDistanceMeters] = useState<number>(0);
+  const [directionalDistances, setDirectionalDistances] = useState<DirectionalDistances>({
+    north: 0,
+    east: 0,
+    south: 0,
+    west: 0,
+  });
   const [elapsedTime, setElapsedTime] = useState<number>(0);
   const [trackingStatus, setTrackingStatus] = useState<TrackingStatus>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -47,15 +57,18 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
   const acceptedPointsRef = useRef<GPSPoint[]>([]);
   const smoothedPathRef = useRef<GPSPoint[]>([]);
   const recentRawPointsBufferRef = useRef<GPSPoint[]>([]);
+  const warmupSamplesRef = useRef<GPSPoint[]>([]);
   const marksRef = useRef<RouteMark[]>([]);
   const totalDistanceMetersRef = useRef<number>(0);
   const speedRef = useRef<number | null>(null);
+  const trackingStatusRef = useRef<TrackingStatus>('idle');
   const stationaryDetectorRef = useRef<StationaryDetector>(new StationaryDetector());
 
   // Sync refs with state
   useEffect(() => {
     totalDistanceMetersRef.current = totalDistanceMeters;
-  }, [totalDistanceMeters]);
+    trackingStatusRef.current = trackingStatus;
+  }, [totalDistanceMeters, trackingStatus]);
 
   // Position Handler
   const handlePositionUpdate = useCallback((position: GeolocationPosition) => {
@@ -82,34 +95,99 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     );
 
     if (validation.isValid) {
-      acceptedPointsRef.current.push(freshPoint);
       setCurrentLocation(freshPoint);
 
-      // Set start location on first valid point
-      setStartLocation((prevStart) => {
-        if (!prevStart) return freshPoint;
-        return prevStart;
-      });
+      // Warm-up / Baseline Phase
+      if (trackingStatusRef.current === 'initializing') {
+        warmupSamplesRef.current.push(freshPoint);
 
-      // Pass fresh point into Stationary Detector for zero-lag distance calculation
-      const motion = stationaryDetectorRef.current.processPoint(freshPoint);
-      setSmoothedSpeed(motion.displaySpeed);
-      speedRef.current = motion.displaySpeed;
+        if (warmupSamplesRef.current.length >= 3) {
+          const avgLat =
+            warmupSamplesRef.current.reduce((sum, p) => sum + p.latitude, 0) /
+            warmupSamplesRef.current.length;
+          const avgLon =
+            warmupSamplesRef.current.reduce((sum, p) => sum + p.longitude, 0) /
+            warmupSamplesRef.current.length;
 
-      // Only accumulate distance and update path for VERIFIED MOVEMENT points
-      if (motion.isVerifiedMovement) {
-        if (motion.distanceDelta > 0) {
-          setTotalDistanceMeters((prevDist) => {
-            const next = prevDist + motion.distanceDelta;
-            totalDistanceMetersRef.current = next;
-            return next;
-          });
+          const baselinePoint: GPSPoint = {
+            latitude: avgLat,
+            longitude: avgLon,
+            accuracy: freshPoint.accuracy,
+            timestamp: freshPoint.timestamp,
+            speed: freshPoint.speed,
+          };
+
+          acceptedPointsRef.current = [baselinePoint];
+          smoothedPathRef.current = [baselinePoint];
+          setStartLocation(baselinePoint);
+          setLastLocation(baselinePoint);
+          setPath([baselinePoint]);
+          setTotalDistanceMeters(0);
+          totalDistanceMetersRef.current = 0;
+
+          stationaryDetectorRef.current.reset();
+          stationaryDetectorRef.current.processPoint(baselinePoint);
+
+          setTrackingStatus('tracking');
+          trackingStatusRef.current = 'tracking';
         }
+        return;
+      }
 
-        // Update distance path and last verified location
-        smoothedPathRef.current.push(freshPoint);
-        setLastLocation(freshPoint);
-        setPath([...smoothedPathRef.current]);
+      if (trackingStatusRef.current === 'tracking') {
+        acceptedPointsRef.current.push(freshPoint);
+
+        // Pass fresh point into Stationary Detector for zero-lag distance calculation
+        const motion = stationaryDetectorRef.current.processPoint(freshPoint);
+        setSmoothedSpeed(motion.displaySpeed);
+        speedRef.current = motion.displaySpeed;
+
+        // Only accumulate distance and update path for VERIFIED MOVEMENT points
+        if (motion.isVerifiedMovement) {
+          if (motion.distanceDelta > 0) {
+            setTotalDistanceMeters((prevDist) => {
+              const next = prevDist + motion.distanceDelta;
+              totalDistanceMetersRef.current = next;
+              return next;
+            });
+
+            // Directional Vector Decomposition
+            const prevLoc = smoothedPathRef.current[smoothedPathRef.current.length - 1] || freshPoint;
+            const stepBearing = calculateBearing(
+              prevLoc.latitude,
+              prevLoc.longitude,
+              freshPoint.latitude,
+              freshPoint.longitude
+            );
+
+            const dec = decomposeVector(motion.distanceDelta, stepBearing);
+            setDirectionalDistances((prev) => ({
+              north: prev.north + dec.north,
+              east: prev.east + dec.east,
+              south: prev.south + dec.south,
+              west: prev.west + dec.west,
+            }));
+
+            // Straight-line distance calculation
+            setStartLocation((startLoc) => {
+              if (startLoc) {
+                const straightDist = calculateHaversineDistance(
+                  startLoc.latitude,
+                  startLoc.longitude,
+                  freshPoint.latitude,
+                  freshPoint.longitude
+                );
+                setStraightLineDistanceMeters(straightDist);
+              }
+              return startLoc;
+            });
+          }
+
+          // Update distance path and last verified location
+          smoothedPathRef.current.push(freshPoint);
+          setLastLocation(freshPoint);
+          setPath([...smoothedPathRef.current]);
+        }
       }
     }
   }, []);
@@ -129,6 +207,7 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     }
     setErrorMessage(msg);
     setTrackingStatus('error');
+    trackingStatusRef.current = 'error';
   }, []);
 
   // Controls
@@ -136,11 +215,17 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     if (!navigator.geolocation) {
       setErrorMessage('Geolocation API is not supported by your browser.');
       setTrackingStatus('error');
+      trackingStatusRef.current = 'error';
       return;
     }
 
     setErrorMessage(null);
-    setTrackingStatus('tracking');
+    setTrackingStatus('initializing');
+    trackingStatusRef.current = 'initializing';
+    warmupSamplesRef.current = [];
+    setTotalDistanceMeters(0);
+    setStraightLineDistanceMeters(0);
+    setDirectionalDistances({ north: 0, east: 0, south: 0, west: 0 });
 
     if (!timerIdRef.current) {
       timerIdRef.current = setInterval(() => {
@@ -173,6 +258,7 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     }
 
     setTrackingStatus('stopped');
+    trackingStatusRef.current = 'stopped';
   }, []);
 
   const resetTracking = useCallback(() => {
@@ -183,58 +269,90 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     setPath([]);
     setMarks([]);
     setTotalDistanceMeters(0);
+    setStraightLineDistanceMeters(0);
+    setDirectionalDistances({ north: 0, east: 0, south: 0, west: 0 });
     setElapsedTime(0);
     setErrorMessage(null);
     setSmoothedSpeed(null);
     setTrackingStatus('idle');
+    trackingStatusRef.current = 'idle';
 
     acceptedPointsRef.current = [];
     smoothedPathRef.current = [];
     recentRawPointsBufferRef.current = [];
+    warmupSamplesRef.current = [];
     marksRef.current = [];
     totalDistanceMetersRef.current = 0;
     speedRef.current = null;
     stationaryDetectorRef.current.reset();
   }, [stopTracking]);
 
-  const addMark = useCallback((note?: string): RouteMark | null => {
-    const currentLoc = acceptedPointsRef.current[acceptedPointsRef.current.length - 1] || currentLocation || startLocation;
-    if (!currentLoc) return null;
+  const addMark = useCallback(
+    (note?: string, headingAngle?: number, cardinalDir?: string): RouteMark | null => {
+      const currentLoc =
+        acceptedPointsRef.current[acceptedPointsRef.current.length - 1] ||
+        currentLocation ||
+        startLocation;
+      if (!currentLoc) return null;
 
-    const markNumber = marksRef.current.length + 1;
-    const now = Date.now();
-    const timeFormatted = new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const markNumber = marksRef.current.length + 1;
+      const now = Date.now();
+      const timeFormatted = new Date(now).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
 
-    const prevMarkDist = marksRef.current.length > 0
-      ? marksRef.current[marksRef.current.length - 1].distanceFromStartMeters
-      : 0;
+      const prevMarkDist =
+        marksRef.current.length > 0
+          ? marksRef.current[marksRef.current.length - 1].distanceFromStartMeters
+          : 0;
 
-    const currentDist = totalDistanceMetersRef.current;
-    const segmentDist = Math.max(0, currentDist - prevMarkDist);
+      const currentDist = totalDistanceMetersRef.current;
+      const segmentDist = Math.max(0, currentDist - prevMarkDist);
 
-    const speedKmH = speedRef.current !== null && speedRef.current >= 0
-      ? speedRef.current * 3.6
-      : (currentLoc.speed && currentLoc.speed >= 0 ? currentLoc.speed * 3.6 : 0);
+      const speedKmH =
+        speedRef.current !== null && speedRef.current >= 0
+          ? speedRef.current * 3.6
+          : currentLoc.speed && currentLoc.speed >= 0
+          ? currentLoc.speed * 3.6
+          : 0;
 
-    const newMark: RouteMark = {
-      id: `mark_${markNumber}_${now}`,
-      number: markNumber,
-      timestamp: now,
-      timeFormatted,
-      distanceFromStartMeters: currentDist,
-      segmentDistanceMeters: segmentDist,
-      latitude: currentLoc.latitude,
-      longitude: currentLoc.longitude,
-      speedKmH: Number(speedKmH.toFixed(1)),
-      accuracyMeters: Number(currentLoc.accuracy.toFixed(1)),
-      note: note ? note.trim() : undefined,
-    };
+      let segBearing: number | undefined;
+      if (marksRef.current.length > 0) {
+        const lastMark = marksRef.current[marksRef.current.length - 1];
+        segBearing = calculateBearing(
+          lastMark.latitude,
+          lastMark.longitude,
+          currentLoc.latitude,
+          currentLoc.longitude
+        );
+      }
 
-    const updated = [...marksRef.current, newMark];
-    marksRef.current = updated;
-    setMarks(updated);
-    return newMark;
-  }, [currentLocation, startLocation]);
+      const newMark: RouteMark = {
+        id: `mark_${markNumber}_${now}`,
+        number: markNumber,
+        timestamp: now,
+        timeFormatted,
+        distanceFromStartMeters: currentDist,
+        segmentDistanceMeters: segmentDist,
+        latitude: currentLoc.latitude,
+        longitude: currentLoc.longitude,
+        speedKmH: Number(speedKmH.toFixed(1)),
+        accuracyMeters: Number(currentLoc.accuracy.toFixed(1)),
+        headingAngle,
+        cardinalDirection: cardinalDir,
+        segmentBearing: segBearing ? Number(segBearing.toFixed(1)) : undefined,
+        note: note ? note.trim() : undefined,
+      };
+
+      const updated = [...marksRef.current, newMark];
+      marksRef.current = updated;
+      setMarks(updated);
+      return newMark;
+    },
+    [currentLocation, startLocation]
+  );
 
   const updateMarkNote = useCallback((id: string, note: string) => {
     const updated = marksRef.current.map((m) =>
@@ -258,7 +376,12 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
   const gpsAccuracy = currentLocation ? currentLocation.accuracy : null;
   const accuracyQuality = getAccuracyQuality(gpsAccuracy);
   const gpsSignalStatus = getGPSSignalStatus(gpsAccuracy);
-  const speed = smoothedSpeed !== null ? smoothedSpeed : (currentLocation ? currentLocation.speed ?? null : null);
+  const speed =
+    smoothedSpeed !== null
+      ? smoothedSpeed
+      : currentLocation
+      ? currentLocation.speed ?? null
+      : null;
 
   return {
     currentLocation,
@@ -267,6 +390,8 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     path,
     marks,
     totalDistanceMeters,
+    straightLineDistanceMeters,
+    directionalDistances,
     elapsedTime,
     gpsAccuracy,
     accuracyQuality,
@@ -281,4 +406,5 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     updateMarkNote,
   };
 }
+
 

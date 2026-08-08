@@ -4,6 +4,7 @@ import L from 'leaflet';
 import 'leaflet-rotate';
 import { GPSPoint, TrackingStatus, GPSSignalStatus, RouteMark } from '../types';
 import { calculateBearing } from '../utils/haversine';
+import { CompassRose } from './CompassRose';
 import { Layers, Navigation as NavigationIcon, Compass, ZoomIn, Eye, Activity, ShieldCheck, MapPin, RotateCw, Plus, Minus, Maximize2, Minimize2, BookmarkPlus } from 'lucide-react';
 
 interface LiveMapProps {
@@ -14,12 +15,16 @@ interface LiveMapProps {
   totalDistanceMeters?: number;
   gpsAccuracy?: number | null;
   speed?: number | null;
+  headingAngle?: number | null;
+  cardinalDirection?: string;
   gpsSignalStatus?: GPSSignalStatus;
   trackingStatus: TrackingStatus;
   errorMessage: string | null;
   onAddMark?: () => void;
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
+  compassNeedsPermission?: boolean;
+  onRequestCompassPermission?: () => void;
 }
 
 export type MapStyleKey = 'osm' | 'carto_dark' | 'esri_satellite' | 'opentopo' | 'carto_voyager';
@@ -185,12 +190,16 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   totalDistanceMeters = 0,
   gpsAccuracy = null,
   speed = null,
+  headingAngle = null,
+  cardinalDirection = 'N',
   gpsSignalStatus = 'Searching',
   trackingStatus,
   errorMessage,
   onAddMark,
   isFullscreen = false,
   onToggleFullscreen,
+  compassNeedsPermission = false,
+  onRequestCompassPermission,
 }) => {
   // Map Style State
   const [selectedStyleKey, setSelectedStyleKey] = useState<MapStyleKey>(() => {
@@ -213,6 +222,21 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   const mapRef = useRef<L.Map | null>(null);
 
   const currentStyleConfig = MAP_STYLES[selectedStyleKey];
+
+  // Fullscreen Body Scroll Lock Effect
+  useEffect(() => {
+    if (isFullscreen) {
+      document.body.style.overflow = 'hidden';
+      document.body.style.touchAction = 'none';
+    } else {
+      document.body.style.overflow = '';
+      document.body.style.touchAction = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+      document.body.style.touchAction = '';
+    };
+  }, [isFullscreen]);
 
   const handleSelectStyle = (key: MapStyleKey) => {
     setSelectedStyleKey(key);
@@ -269,24 +293,10 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   useEffect(() => {
     if (!autoRotate) return;
 
-    const handleOrientation = (e: DeviceOrientationEvent) => {
-      let compassHeading: number | null = null;
-      if ('webkitCompassHeading' in e && typeof e.webkitCompassHeading === 'number') {
-        compassHeading = e.webkitCompassHeading;
-      } else if (e.alpha !== null) {
-        compassHeading = (360 - e.alpha) % 360;
-      }
-
-      if (compassHeading !== null && mapRef.current && (mapRef.current as any).setBearing) {
-        (mapRef.current as any).setBearing(-compassHeading);
-      }
-    };
-
-    window.addEventListener('deviceorientation', handleOrientation, true);
-    return () => {
-      window.removeEventListener('deviceorientation', handleOrientation, true);
-    };
-  }, [autoRotate]);
+    if (headingAngle !== null && mapRef.current && (mapRef.current as any).setBearing) {
+      (mapRef.current as any).setBearing(-headingAngle);
+    }
+  }, [autoRotate, headingAngle]);
 
   // Reset North (0°)
   const handleResetNorth = useCallback(() => {
@@ -328,6 +338,14 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       setPois([]);
     }
   }, [currentZoom, activePoint?.latitude, activePoint?.longitude, fetchPOIs]);
+
+  const handleMarkClick = (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (onAddMark) {
+      onAddMark();
+    }
+  };
 
   const polylinePositions: [number, number][] = path.map((point) => [
     point.latitude,
@@ -371,7 +389,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   const displayRotation = Math.round(mapRotation);
 
   const containerClasses = isFullscreen
-    ? 'fixed inset-0 z-[1000] w-screen h-[100dvh] bg-slate-950 flex flex-col overflow-hidden'
+    ? 'fixed inset-0 top-0 left-0 right-0 bottom-0 z-[9999] w-screen h-[100dvh] bg-slate-950 flex flex-col overflow-hidden select-none'
     : 'w-full h-full min-h-[320px] rounded-xl overflow-hidden border border-slate-800 relative shadow-2xl bg-slate-950';
 
   return (
@@ -382,7 +400,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       <div className="absolute top-3 left-3 z-[400] flex flex-wrap items-center gap-2 pointer-events-none">
         <div className="bg-slate-950/90 backdrop-blur-md border border-slate-800 text-slate-100 text-xs font-bold px-3.5 py-1.5 rounded-full flex items-center gap-1.5 shadow-lg">
           <Activity className="w-4 h-4 text-emerald-400" />
-          <span>{totalDistanceMeters.toFixed(1)} m</span>
+          <span>{totalDistanceMeters.toFixed(2)} m</span>
         </div>
 
         <div className="bg-slate-950/90 backdrop-blur-md border border-slate-800 text-slate-100 text-xs font-bold px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-lg">
@@ -396,15 +414,23 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         </div>
 
         <div className="bg-slate-950/90 backdrop-blur-md border border-slate-800 text-emerald-400 text-[10px] font-semibold px-2.5 py-1 rounded-full shadow-lg">
-          {gpsSignalStatus}
+          {trackingStatus === 'initializing' ? 'GPS Initializing...' : gpsSignalStatus}
         </div>
       </div>
 
       {/* ---------------------------------------------------------------- */}
-      {/* 2. TOP RIGHT: Map Style, Fullscreen, Auto Follow, Compass         */}
+      {/* 2. TOP RIGHT: Compass, Map Style, Fullscreen, Auto Rotate        */}
       {/* ---------------------------------------------------------------- */}
       <div className="absolute top-3 right-3 z-[400] flex flex-col items-end gap-2">
         <div className="flex items-center gap-2">
+          {/* Compass Widget */}
+          <CompassRose
+            headingAngle={headingAngle}
+            cardinalDirection={cardinalDirection}
+            needsPermission={compassNeedsPermission}
+            onRequestPermission={onRequestCompassPermission}
+          />
+
           {/* Map Style Button & Dropdown */}
           <div className="relative">
             <button
@@ -498,14 +524,15 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       </div>
 
       {/* ---------------------------------------------------------------- */}
-      {/* 3. BOTTOM CENTER: Floating MARK Snapshot Button (In Fullscreen)  */}
+      {/* 3. BOTTOM CENTER: Isolated Floating MARK Button (In Fullscreen)  */}
       {/* ---------------------------------------------------------------- */}
       {onAddMark && trackingStatus === 'tracking' && (
-        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-[400]">
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[500] pointer-events-auto">
           <button
-            onClick={onAddMark}
-            className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-sm px-5 py-3 rounded-full flex items-center gap-2 shadow-2xl border-2 border-white transition-all active:scale-95"
-            title="Mark current turning point / location"
+            onClick={handleMarkClick}
+            onTouchEnd={handleMarkClick}
+            className="bg-amber-500 hover:bg-amber-400 active:bg-amber-300 text-slate-950 font-black text-sm px-6 py-3.5 rounded-full flex items-center gap-2 shadow-2xl border-2 border-white transition-all active:scale-95 touch-manipulation"
+            title="Mark current turning point without scrolling map or page"
           >
             <BookmarkPlus className="w-5 h-5 fill-current" />
             <span>MARK ({marks.length})</span>
@@ -651,6 +678,11 @@ export const LiveMap: React.FC<LiveMapProps> = ({
                 <div className="text-slate-600 text-[11px]">
                   Segment Distance: <span className="font-semibold text-slate-800">{m.segmentDistanceMeters.toFixed(1)} m</span>
                 </div>
+                {m.cardinalDirection && (
+                  <div className="text-slate-600 text-[11px]">
+                    Direction: <span className="font-bold text-cyan-600">{m.cardinalDirection}</span> ({m.headingAngle ?? 0}°)
+                  </div>
+                )}
                 <div className="text-slate-500 text-[10px] grid grid-cols-2 gap-1 pt-1 border-t border-slate-200">
                   <span>Speed: {m.speedKmH.toFixed(1)} km/h</span>
                   <span>Accuracy: ±{m.accuracyMeters.toFixed(1)}m</span>
@@ -710,4 +742,5 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     </div>
   );
 };
+
 
