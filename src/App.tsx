@@ -18,11 +18,13 @@ type ActiveTab = 'tracker' | 'history';
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('tracker');
   const [sessions, setSessions] = useState<MeasurementSession[]>([]);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
   const {
     currentLocation,
     startLocation,
     path,
+    marks,
     totalDistanceMeters,
     elapsedTime,
     gpsAccuracy,
@@ -34,6 +36,8 @@ export default function App() {
     startTracking,
     stopTracking,
     resetTracking,
+    addMark,
+    updateMarkNote,
   } = useGeolocationTracker();
 
   const prevStatusRef = useRef(trackingStatus);
@@ -58,14 +62,15 @@ export default function App() {
         path,
         totalDistanceMeters,
         elapsedTime,
-        startTimeRef.current
+        startTimeRef.current,
+        marks
       );
       saveSession(newSession);
       setSessions(getSavedSessions());
     }
 
     prevStatusRef.current = trackingStatus;
-  }, [trackingStatus, path, totalDistanceMeters, elapsedTime]);
+  }, [trackingStatus, path, totalDistanceMeters, elapsedTime, marks]);
 
   const handleStopTracking = useCallback(() => {
     stopTracking();
@@ -80,6 +85,14 @@ export default function App() {
     clearAllStorage();
     setSessions([]);
   }, []);
+
+  const handleToggleFullscreen = useCallback(() => {
+    setIsFullscreen((prev) => !prev);
+  }, []);
+
+  const handleAddMark = useCallback(() => {
+    addMark();
+  }, [addMark]);
 
   return (
     <main className="w-screen h-screen bg-slate-950 p-2 sm:p-4 flex flex-col gap-3 overflow-hidden">
@@ -130,9 +143,14 @@ export default function App() {
             gpsSignalStatus={gpsSignalStatus}
             speed={speed}
             trackingStatus={trackingStatus}
+            marks={marks}
             startTracking={startTracking}
             stopTracking={handleStopTracking}
             resetTracking={resetTracking}
+            onAddMark={handleAddMark}
+            onUpdateMarkNote={updateMarkNote}
+            onToggleFullscreen={handleToggleFullscreen}
+            isFullscreen={isFullscreen}
           />
 
           {/* Live Map */}
@@ -141,12 +159,16 @@ export default function App() {
               currentLocation={currentLocation}
               startLocation={startLocation}
               path={path}
+              marks={marks}
               totalDistanceMeters={totalDistanceMeters}
               gpsAccuracy={gpsAccuracy}
               speed={speed}
               gpsSignalStatus={gpsSignalStatus}
               trackingStatus={trackingStatus}
               errorMessage={errorMessage}
+              onAddMark={handleAddMark}
+              isFullscreen={isFullscreen}
+              onToggleFullscreen={handleToggleFullscreen}
             />
           </div>
         </div>

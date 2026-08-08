@@ -1,4 +1,4 @@
-import { MeasurementSession, GPSPoint } from '../types';
+import { MeasurementSession, GPSPoint, RouteMark } from '../types';
 
 const STORAGE_KEY = 'distance_meter_sessions';
 
@@ -76,7 +76,8 @@ export function buildMeasurementSession(
   path: GPSPoint[],
   totalDistanceMeters: number,
   durationSeconds: number,
-  startTime: number
+  startTime: number,
+  marks?: RouteMark[]
 ): MeasurementSession {
   const now = Date.now();
   const dateFormatted = new Date(now).toLocaleString();
@@ -118,5 +119,6 @@ export function buildMeasurementSession(
     endLocation: endLoc,
     totalGPSPoints: totalPoints,
     path,
+    marks: marks && marks.length > 0 ? marks : undefined,
   };
 }

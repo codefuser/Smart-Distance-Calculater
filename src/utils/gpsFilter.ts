@@ -97,12 +97,12 @@ export function validateGPSPointAdvanced(
     newPoint.longitude
   );
 
-  // 3. Movement threshold: ignore movements smaller than 0.5 meters
-  if (distanceDelta < 0.5) {
+  // 3. Movement threshold: ignore micro movements smaller than 0.25 meters
+  if (distanceDelta < 0.25) {
     return {
       isValid: false,
       distanceDelta: 0,
-      reason: `Stationary jitter (${distanceDelta.toFixed(2)}m < 0.5m threshold)`,
+      reason: `Stationary jitter (${distanceDelta.toFixed(2)}m < 0.25m threshold)`,
     };
   }
 
@@ -122,13 +122,13 @@ export function validateGPSPointAdvanced(
   }
 
   // 5. Adaptive Accuracy Tiered Filtering
-  // Tier A: Accuracy 0 - 10m -> Accept immediately
-  if (newPoint.accuracy <= 10) {
+  // Tier A: Accuracy 0 - 25m -> Accept immediately
+  if (newPoint.accuracy <= 25) {
     return { isValid: true, distanceDelta };
   }
 
-  // Tier B: Accuracy 10 - 30m -> Accept if movement direction is consistent
-  if (newPoint.accuracy > 10 && newPoint.accuracy <= 30) {
+  // Tier B: Accuracy 25 - 40m -> Accept if movement direction is consistent
+  if (newPoint.accuracy > 25 && newPoint.accuracy <= 40) {
     if (previousPath.length >= 2) {
       const prevPoint = previousPath[previousPath.length - 2];
       const lastPointInPath = previousPath[previousPath.length - 1];
@@ -149,7 +149,7 @@ export function validateGPSPointAdvanced(
 
       const angleDiff = calculateAngleDifference(previousBearing, currentBearing);
 
-      if (angleDiff > 90) {
+      if (angleDiff > 120) {
         return {
           isValid: false,
           distanceDelta: 0,
@@ -160,13 +160,13 @@ export function validateGPSPointAdvanced(
     return { isValid: true, distanceDelta };
   }
 
-  // Tier C: Accuracy 30 - 50m -> Accept only if 3 consecutive points agree
-  if (newPoint.accuracy > 30 && newPoint.accuracy <= 50) {
+  // Tier C: Accuracy 40 - 50m -> Accept only if 2 consecutive points agree
+  if (newPoint.accuracy > 40 && newPoint.accuracy <= 50) {
     if (recentRawPointsBuffer.length < 2) {
       return {
         isValid: false,
         distanceDelta: 0,
-        reason: `Waiting for 3 consecutive points agreement (${newPoint.accuracy.toFixed(1)}m accuracy)`,
+        reason: `Waiting for consecutive points agreement (${newPoint.accuracy.toFixed(1)}m accuracy)`,
       };
     }
 
@@ -176,12 +176,11 @@ export function validateGPSPointAdvanced(
     const d1 = calculateHaversineDistance(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
     const d2 = calculateHaversineDistance(p2.latitude, p2.longitude, newPoint.latitude, newPoint.longitude);
 
-    // Check if points are in spatial agreement (consistently moving or clustered)
-    if (d1 > 100 || d2 > 100) {
+    if (d1 > 80 || d2 > 80) {
       return {
         isValid: false,
         distanceDelta: 0,
-        reason: `Inconsistent 3-point agreement delta (${d2.toFixed(1)}m)`,
+        reason: `Inconsistent point agreement delta (${d2.toFixed(1)}m)`,
       };
     }
 
@@ -252,7 +251,7 @@ export class StationaryDetector {
 
   public processPoint(point: GPSPoint): MotionAnalysis {
     this.rollingWindow.push(point);
-    if (this.rollingWindow.length > 8) {
+    if (this.rollingWindow.length > 6) {
       this.rollingWindow.shift();
     }
 
@@ -277,7 +276,7 @@ export class StationaryDetector {
       point.longitude
     );
 
-    const timeDeltaSec = Math.max((point.timestamp - prevPoint.timestamp) / 1000, 0.5);
+    const timeDeltaSec = Math.max((point.timestamp - prevPoint.timestamp) / 1000, 0.2);
     const stepSpeedMps = stepDist / timeDeltaSec;
     const reportedSpeedMps =
       point.speed !== undefined && point.speed !== null && point.speed >= 0
@@ -315,20 +314,19 @@ export class StationaryDetector {
       }
     }
 
-    const displacementRatio = grossDistance > 0.5 ? netDisplacement / grossDistance : 0;
+    const displacementRatio = grossDistance > 0.3 ? netDisplacement / grossDistance : 0;
 
     // Evaluate signals
-    const lowMotionSensors = this.isDeviceMotionActive && this.motionVariance < 0.1;
+    const lowMotionSensors = this.isDeviceMotionActive && this.motionVariance < 0.05;
     const isLowMotionSample =
       lowMotionSensors ||
-      effectiveSpeedMps < 0.45 ||
-      stepDist < 1.0 ||
-      (displacementRatio < 0.35 && stepDist < 2.0);
+      (effectiveSpeedMps < 0.3 && stepDist < 0.3) ||
+      (displacementRatio < 0.3 && stepDist < 0.8);
 
     const isHighMotionSample =
-      effectiveSpeedMps >= 0.8 ||
-      (distFromAnchor > Math.max(3.0, point.accuracy * 0.4) && stepDist >= 1.0) ||
-      (stepDist >= 2.0 && displacementRatio > 0.6);
+      effectiveSpeedMps >= 0.4 ||
+      (distFromAnchor > Math.max(1.2, point.accuracy * 0.35) && stepDist >= 0.4) ||
+      (stepDist >= 0.8 && displacementRatio > 0.5);
 
     if (this.isStationary) {
       if (isHighMotionSample) {
@@ -338,7 +336,7 @@ export class StationaryDetector {
         this.consecutiveHighMotionCount = 0;
       }
 
-      if (this.consecutiveHighMotionCount >= 2 || distFromAnchor > 4.5) {
+      if (this.consecutiveHighMotionCount >= 1 || distFromAnchor > 1.2) {
         this.isStationary = false;
         this.consecutiveHighMotionCount = 0;
         this.consecutiveLowMotionCount = 0;

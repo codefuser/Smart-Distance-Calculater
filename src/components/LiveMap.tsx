@@ -2,20 +2,24 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { MapContainer, TileLayer, Marker, Polyline, useMap, useMapEvents, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet-rotate';
-import { GPSPoint, TrackingStatus, GPSSignalStatus } from '../types';
+import { GPSPoint, TrackingStatus, GPSSignalStatus, RouteMark } from '../types';
 import { calculateBearing } from '../utils/haversine';
-import { Layers, Navigation as NavigationIcon, Compass, ZoomIn, Eye, Activity, ShieldCheck, MapPin, RotateCw, Plus, Minus } from 'lucide-react';
+import { Layers, Navigation as NavigationIcon, Compass, ZoomIn, Eye, Activity, ShieldCheck, MapPin, RotateCw, Plus, Minus, Maximize2, Minimize2, BookmarkPlus } from 'lucide-react';
 
 interface LiveMapProps {
   currentLocation: GPSPoint | null;
   startLocation: GPSPoint | null;
   path: GPSPoint[];
+  marks?: RouteMark[];
   totalDistanceMeters?: number;
   gpsAccuracy?: number | null;
   speed?: number | null;
   gpsSignalStatus?: GPSSignalStatus;
   trackingStatus: TrackingStatus;
   errorMessage: string | null;
+  onAddMark?: () => void;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
 }
 
 export type MapStyleKey = 'osm' | 'carto_dark' | 'esri_satellite' | 'opentopo' | 'carto_voyager';
@@ -34,35 +38,35 @@ const MAP_STYLES: Record<MapStyleKey, MapStyleConfig> = {
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     maxNativeZoom: 19,
-    maxZoom: 24,
+    maxZoom: 19,
   },
   carto_dark: {
     name: 'Carto Dark',
     url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
     maxNativeZoom: 20,
-    maxZoom: 24,
+    maxZoom: 20,
   },
   esri_satellite: {
     name: 'Esri Satellite',
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attribution: 'Tiles &copy; Esri &mdash; Source: Esri',
     maxNativeZoom: 19,
-    maxZoom: 24,
+    maxZoom: 19,
   },
   opentopo: {
     name: 'OpenTopo Terrain',
     url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
     attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     maxNativeZoom: 17,
-    maxZoom: 24,
+    maxZoom: 17,
   },
   carto_voyager: {
     name: 'Carto Voyager',
     url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
     maxNativeZoom: 20,
-    maxZoom: 24,
+    maxZoom: 20,
   },
 };
 
@@ -89,6 +93,17 @@ function createFlagIcon(flagEmoji: string, bgClass: string) {
         </div>`,
     iconSize: [32, 32],
     iconAnchor: [16, 16],
+  });
+}
+
+function createMarkNumberIcon(num: number) {
+  return L.divIcon({
+    className: 'custom-route-mark-marker',
+    html: `<div class="flex items-center justify-center w-7 h-7 rounded-full bg-amber-500 border-2 border-white shadow-xl text-slate-950 font-black text-xs">
+          ${num}
+        </div>`,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
   });
 }
 
@@ -166,12 +181,16 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   currentLocation,
   startLocation,
   path,
+  marks = [],
   totalDistanceMeters = 0,
   gpsAccuracy = null,
   speed = null,
   gpsSignalStatus = 'Searching',
   trackingStatus,
   errorMessage,
+  onAddMark,
+  isFullscreen = false,
+  onToggleFullscreen,
 }) => {
   // Map Style State
   const [selectedStyleKey, setSelectedStyleKey] = useState<MapStyleKey>(() => {
@@ -193,6 +212,8 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   const [pois, setPois] = useState<POIItem[]>([]);
   const mapRef = useRef<L.Map | null>(null);
 
+  const currentStyleConfig = MAP_STYLES[selectedStyleKey];
+
   const handleSelectStyle = (key: MapStyleKey) => {
     setSelectedStyleKey(key);
     setShowStyleMenu(false);
@@ -202,6 +223,17 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       // ignore
     }
   };
+
+  // Synchronize maxZoom & clamp zoom level when style changes
+  useEffect(() => {
+    if (mapRef.current) {
+      const maxZ = currentStyleConfig.maxZoom;
+      mapRef.current.setMaxZoom(maxZ);
+      if (mapRef.current.getZoom() > maxZ) {
+        mapRef.current.setZoom(maxZ);
+      }
+    }
+  }, [selectedStyleKey, currentStyleConfig.maxZoom]);
 
   const activePoint = currentLocation || startLocation;
 
@@ -213,7 +245,7 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         L.latLng(prevPointRef.current.latitude, prevPointRef.current.longitude)
       );
 
-      if (distMoved >= 0.5) {
+      if (distMoved >= 0.3) {
         const newHeading = calculateBearing(
           prevPointRef.current.latitude,
           prevPointRef.current.longitude,
@@ -312,7 +344,6 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     : null;
 
   const defaultCenter: [number, number] = currentMarkerPosition || [13.0827, 80.2707];
-  const currentStyleConfig = MAP_STYLES[selectedStyleKey];
 
   if (errorMessage) {
     return (
@@ -339,63 +370,81 @@ export const LiveMap: React.FC<LiveMapProps> = ({
   const speedKmH = speed !== null && speed >= 0 ? (speed * 3.6).toFixed(1) : '0.0';
   const displayRotation = Math.round(mapRotation);
 
+  const containerClasses = isFullscreen
+    ? 'fixed inset-0 z-[1000] w-screen h-[100dvh] bg-slate-950 flex flex-col overflow-hidden'
+    : 'w-full h-full min-h-[320px] rounded-xl overflow-hidden border border-slate-800 relative shadow-2xl bg-slate-950';
+
   return (
-    <div className="w-full h-full min-h-[320px] rounded-xl overflow-hidden border border-slate-800 relative shadow-2xl bg-slate-950">
+    <div className={containerClasses}>
       {/* ---------------------------------------------------------------- */}
       {/* 1. TOP LEFT: Live Distance, Speed & GPS Accuracy Chips           */}
       {/* ---------------------------------------------------------------- */}
-      <div className="absolute top-3 left-3 z-[400] flex flex-wrap items-center gap-3 pointer-events-none">
-        <div className="bg-slate-950/85 backdrop-blur-md border border-slate-800 text-slate-100 text-[11px] font-semibold px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-lg">
-          <Activity className="w-3.5 h-3.5 text-emerald-400" />
+      <div className="absolute top-3 left-3 z-[400] flex flex-wrap items-center gap-2 pointer-events-none">
+        <div className="bg-slate-950/90 backdrop-blur-md border border-slate-800 text-slate-100 text-xs font-bold px-3.5 py-1.5 rounded-full flex items-center gap-1.5 shadow-lg">
+          <Activity className="w-4 h-4 text-emerald-400" />
           <span>{totalDistanceMeters.toFixed(1)} m</span>
         </div>
 
-        <div className="bg-slate-950/85 backdrop-blur-md border border-slate-800 text-slate-100 text-[11px] font-semibold px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-lg">
+        <div className="bg-slate-950/90 backdrop-blur-md border border-slate-800 text-slate-100 text-xs font-bold px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-lg">
           <NavigationIcon className="w-3.5 h-3.5 text-amber-400" />
           <span>{speedKmH} km/h</span>
         </div>
 
-        <div className="bg-slate-950/85 backdrop-blur-md border border-slate-800 text-slate-100 text-[11px] font-semibold px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-lg">
+        <div className="bg-slate-950/90 backdrop-blur-md border border-slate-800 text-slate-100 text-xs font-semibold px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-lg">
           <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
           <span>{gpsAccuracy !== null ? `±${gpsAccuracy.toFixed(1)}m` : '---'}</span>
         </div>
 
-        <div className="bg-slate-950/85 backdrop-blur-md border border-slate-800 text-emerald-400 text-[10px] font-semibold px-2.5 py-1 rounded-full shadow-lg">
+        <div className="bg-slate-950/90 backdrop-blur-md border border-slate-800 text-emerald-400 text-[10px] font-semibold px-2.5 py-1 rounded-full shadow-lg">
           {gpsSignalStatus}
         </div>
       </div>
 
       {/* ---------------------------------------------------------------- */}
-      {/* 2. TOP RIGHT: Map Style, Auto Follow, Auto Rotate, Reset North   */}
+      {/* 2. TOP RIGHT: Map Style, Fullscreen, Auto Follow, Compass         */}
       {/* ---------------------------------------------------------------- */}
-      <div className="absolute top-3 right-3 z-[400] flex flex-col items-end gap-3">
-        {/* Map Style Button & Dropdown */}
-        <div className="relative">
-          <button
-            onClick={() => setShowStyleMenu((prev) => !prev)}
-            className="bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-2 shadow-xl backdrop-blur-sm transition-all"
-            title="Map Style"
-          >
-            <Layers className="w-4 h-4 text-emerald-400" />
-            <span className="hidden sm:inline">{currentStyleConfig.name}</span>
-          </button>
+      <div className="absolute top-3 right-3 z-[400] flex flex-col items-end gap-2">
+        <div className="flex items-center gap-2">
+          {/* Map Style Button & Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setShowStyleMenu((prev) => !prev)}
+              className="bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-2 shadow-xl backdrop-blur-sm transition-all"
+              title="Map Style"
+            >
+              <Layers className="w-4 h-4 text-emerald-400" />
+              <span className="hidden sm:inline">{currentStyleConfig.name}</span>
+            </button>
 
-          {showStyleMenu && (
-            <div className="absolute right-0 mt-1.5 w-44 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl p-1 z-50 text-xs space-y-0.5">
-              {(Object.keys(MAP_STYLES) as MapStyleKey[]).map((key) => (
-                <button
-                  key={key}
-                  onClick={() => handleSelectStyle(key)}
-                  className={`w-full text-left px-2.5 py-1.5 rounded-md transition-colors ${
-                    selectedStyleKey === key
-                      ? 'bg-emerald-600 text-white font-semibold'
-                      : 'text-slate-300 hover:bg-slate-800'
-                  }`}
-                >
-                  {MAP_STYLES[key].name}
-                </button>
-              ))}
-            </div>
+            {showStyleMenu && (
+              <div className="absolute right-0 mt-1.5 w-44 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl p-1 z-50 text-xs space-y-0.5">
+                {(Object.keys(MAP_STYLES) as MapStyleKey[]).map((key) => (
+                  <button
+                    key={key}
+                    onClick={() => handleSelectStyle(key)}
+                    className={`w-full text-left px-2.5 py-1.5 rounded-md transition-colors ${
+                      selectedStyleKey === key
+                        ? 'bg-emerald-600 text-white font-semibold'
+                        : 'text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    {MAP_STYLES[key].name} (Max Zoom {MAP_STYLES[key].maxZoom})
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Fullscreen Toggle Button */}
+          {onToggleFullscreen && (
+            <button
+              onClick={onToggleFullscreen}
+              className="bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-emerald-400 text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-xl backdrop-blur-sm transition-all active:scale-95"
+              title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen Map'}
+            >
+              {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+              <span className="hidden sm:inline">{isFullscreen ? 'Exit' : 'Fullscreen'}</span>
+            </button>
           )}
         </div>
 
@@ -449,9 +498,25 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       </div>
 
       {/* ---------------------------------------------------------------- */}
-      {/* 3. BOTTOM RIGHT: Re-center & Zoom Level Indicator                */}
+      {/* 3. BOTTOM CENTER: Floating MARK Snapshot Button (In Fullscreen)  */}
       {/* ---------------------------------------------------------------- */}
-      <div className="absolute bottom-4 right-3 z-[400] flex flex-col items-end gap-3">
+      {onAddMark && trackingStatus === 'tracking' && (
+        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-[400]">
+          <button
+            onClick={onAddMark}
+            className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-sm px-5 py-3 rounded-full flex items-center gap-2 shadow-2xl border-2 border-white transition-all active:scale-95"
+            title="Mark current turning point / location"
+          >
+            <BookmarkPlus className="w-5 h-5 fill-current" />
+            <span>MARK ({marks.length})</span>
+          </button>
+        </div>
+      )}
+
+      {/* ---------------------------------------------------------------- */}
+      {/* 4. BOTTOM RIGHT: Re-center & Zoom Level Indicator                */}
+      {/* ---------------------------------------------------------------- */}
+      <div className="absolute bottom-4 right-3 z-[400] flex flex-col items-end gap-2">
         {/* Re-center Button */}
         <button
           onClick={() => {
@@ -474,19 +539,26 @@ export const LiveMap: React.FC<LiveMapProps> = ({
         {/* Zoom Level Indicator */}
         <div className="bg-slate-950/90 border border-slate-800 text-slate-300 text-[11px] font-mono px-2.5 py-1.5 rounded-lg shadow-xl backdrop-blur-sm flex items-center gap-1.5">
           <ZoomIn className="w-3.5 h-3.5 text-slate-400" />
-          <span>Zoom: {currentZoom}</span>
+          <span>Zoom: {currentZoom} / {currentStyleConfig.maxZoom}</span>
         </div>
       </div>
 
       {/* ---------------------------------------------------------------- */}
-      {/* 4. BOTTOM LEFT: Zoom (+ / -) Control Buttons                     */}
+      {/* 5. BOTTOM LEFT: Zoom (+ / -) Control Buttons                     */}
       {/* ---------------------------------------------------------------- */}
       <div className="absolute bottom-4 left-3 z-[400] flex flex-col gap-2">
         <button
           onClick={() => {
-            if (mapRef.current) mapRef.current.zoomIn();
+            if (mapRef.current && currentZoom < currentStyleConfig.maxZoom) {
+              mapRef.current.zoomIn();
+            }
           }}
-          className="w-9 h-9 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 text-slate-100 rounded-lg shadow-xl flex items-center justify-center backdrop-blur-sm transition-colors active:scale-95"
+          disabled={currentZoom >= currentStyleConfig.maxZoom}
+          className={`w-9 h-9 border rounded-lg shadow-xl flex items-center justify-center backdrop-blur-sm transition-colors active:scale-95 ${
+            currentZoom >= currentStyleConfig.maxZoom
+              ? 'bg-slate-900/50 text-slate-600 border-slate-800 cursor-not-allowed'
+              : 'bg-slate-900/90 hover:bg-slate-800 text-slate-100 border-slate-700'
+          }`}
           title="Zoom In"
         >
           <Plus className="w-5 h-5" />
@@ -508,9 +580,9 @@ export const LiveMap: React.FC<LiveMapProps> = ({
       <MapContainer
         ref={mapRef}
         center={defaultCenter}
-        zoom={18}
+        zoom={Math.min(18, currentStyleConfig.maxZoom)}
         minZoom={1}
-        maxZoom={24}
+        maxZoom={currentStyleConfig.maxZoom}
         zoomControl={false}
         scrollWheelZoom={true}
         rotate={true}
@@ -560,6 +632,39 @@ export const LiveMap: React.FC<LiveMapProps> = ({
           </Marker>
         )}
 
+        {/* Saved Route Marks */}
+        {marks.map((m) => (
+          <Marker
+            key={m.id}
+            position={[m.latitude, m.longitude]}
+            icon={createMarkNumberIcon(m.number)}
+          >
+            <Popup>
+              <div className="text-xs space-y-1 p-1 font-sans">
+                <div className="font-bold text-amber-600 text-sm flex items-center justify-between gap-3">
+                  <span>MARK {m.number}</span>
+                  <span className="text-[10px] text-slate-500 font-normal">{m.timeFormatted}</span>
+                </div>
+                <div className="text-slate-800 font-medium">
+                  Distance from Start: <span className="font-bold text-emerald-600">{m.distanceFromStartMeters.toFixed(1)} m</span>
+                </div>
+                <div className="text-slate-600 text-[11px]">
+                  Segment Distance: <span className="font-semibold text-slate-800">{m.segmentDistanceMeters.toFixed(1)} m</span>
+                </div>
+                <div className="text-slate-500 text-[10px] grid grid-cols-2 gap-1 pt-1 border-t border-slate-200">
+                  <span>Speed: {m.speedKmH.toFixed(1)} km/h</span>
+                  <span>Accuracy: ±{m.accuracyMeters.toFixed(1)}m</span>
+                </div>
+                {m.note && (
+                  <div className="mt-1 bg-amber-50 text-amber-900 px-1.5 py-0.5 rounded text-[11px] font-semibold border border-amber-200">
+                    "{m.note}"
+                  </div>
+                )}
+              </div>
+            </Popup>
+          </Marker>
+        ))}
+
         {/* End Flag Marker */}
         {endLocation && trackingStatus === 'stopped' && (
           <Marker
@@ -605,3 +710,4 @@ export const LiveMap: React.FC<LiveMapProps> = ({
     </div>
   );
 };
+

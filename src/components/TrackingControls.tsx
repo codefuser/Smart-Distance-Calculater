@@ -1,6 +1,6 @@
-import React from 'react';
-import { Play, Square, RotateCcw, Compass, Activity, Clock, Gauge, Navigation, Signal } from 'lucide-react';
-import { GPSPoint, TrackingStatus, AccuracyQuality, GPSSignalStatus } from '../types';
+import React, { useState } from 'react';
+import { Play, Square, RotateCcw, Compass, Activity, Clock, Gauge, Navigation, Signal, BookmarkPlus, Maximize2, Minimize2, Tag, Edit2, Check } from 'lucide-react';
+import { GPSPoint, TrackingStatus, AccuracyQuality, GPSSignalStatus, RouteMark } from '../types';
 
 interface TrackingControlsProps {
   currentLocation: GPSPoint | null;
@@ -11,9 +11,14 @@ interface TrackingControlsProps {
   gpsSignalStatus: GPSSignalStatus;
   speed: number | null;
   trackingStatus: TrackingStatus;
+  marks?: RouteMark[];
   startTracking: () => void;
   stopTracking: () => void;
   resetTracking: () => void;
+  onAddMark?: () => void;
+  onUpdateMarkNote?: (id: string, note: string) => void;
+  onToggleFullscreen?: () => void;
+  isFullscreen?: boolean;
 }
 
 function formatTime(seconds: number): string {
@@ -78,15 +83,34 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
   gpsSignalStatus,
   speed,
   trackingStatus,
+  marks = [],
   startTracking,
   stopTracking,
   resetTracking,
+  onAddMark,
+  onUpdateMarkNote,
+  onToggleFullscreen,
+  isFullscreen = false,
 }) => {
   const isTracking = trackingStatus === 'tracking';
   const statusBadge = getStatusBadge(trackingStatus);
   const signalBadgeClass = getSignalBadge(gpsSignalStatus);
-
   const speedKmH = speed !== null && speed >= 0 ? (speed * 3.6).toFixed(1) : '0.0';
+
+  const [editingMarkId, setEditingMarkId] = useState<string | null>(null);
+  const [editingNoteText, setEditingNoteText] = useState<string>('');
+
+  const handleStartEditNote = (mark: RouteMark) => {
+    setEditingMarkId(mark.id);
+    setEditingNoteText(mark.note || '');
+  };
+
+  const handleSaveNote = (id: string) => {
+    if (onUpdateMarkNote) {
+      onUpdateMarkNote(id, editingNoteText);
+    }
+    setEditingMarkId(null);
+  };
 
   return (
     <div className="w-full space-y-3">
@@ -95,7 +119,7 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
         <button
           onClick={startTracking}
           disabled={isTracking}
-          className={`flex-1 min-w-[120px] inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-semibold text-sm transition-all shadow-md ${
+          className={`flex-1 min-w-[110px] inline-flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-lg font-semibold text-xs sm:text-sm transition-all shadow-md ${
             isTracking
               ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
               : 'bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-500 active:scale-[0.98]'
@@ -105,10 +129,26 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
           Start Tracking
         </button>
 
+        {onAddMark && (
+          <button
+            onClick={onAddMark}
+            disabled={!isTracking}
+            className={`inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-lg font-bold text-xs sm:text-sm transition-all shadow-md ${
+              !isTracking
+                ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                : 'bg-amber-500 hover:bg-amber-400 text-slate-950 border border-amber-400 active:scale-[0.98]'
+            }`}
+            title="Snapshot turning point / milestone without stopping tracking"
+          >
+            <BookmarkPlus className="w-4 h-4 fill-current" />
+            MARK {marks.length > 0 ? `(${marks.length})` : ''}
+          </button>
+        )}
+
         <button
           onClick={stopTracking}
           disabled={!isTracking}
-          className={`flex-1 min-w-[120px] inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-semibold text-sm transition-all shadow-md ${
+          className={`flex-1 min-w-[110px] inline-flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-lg font-semibold text-xs sm:text-sm transition-all shadow-md ${
             !isTracking
               ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
               : 'bg-rose-600 hover:bg-rose-500 text-white border border-rose-500 active:scale-[0.98]'
@@ -118,9 +158,20 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
           Stop Tracking
         </button>
 
+        {onToggleFullscreen && (
+          <button
+            onClick={onToggleFullscreen}
+            className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg font-semibold text-xs sm:text-sm transition-all bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 active:scale-[0.98]"
+            title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen Map Mode'}
+          >
+            {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            <span className="hidden xs:inline">{isFullscreen ? 'Exit' : 'Fullscreen'}</span>
+          </button>
+        )}
+
         <button
           onClick={resetTracking}
-          className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-semibold text-sm transition-all bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 active:scale-[0.98]"
+          className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg font-semibold text-xs sm:text-sm transition-all bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 active:scale-[0.98]"
         >
           <RotateCcw className="w-4 h-4" />
           Reset
@@ -221,6 +272,86 @@ export const TrackingControls: React.FC<TrackingControlsProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Route Marks Section */}
+      {marks.length > 0 && (
+        <div className="bg-slate-900 border border-slate-800 rounded-lg p-3 shadow-sm space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
+              <Tag className="w-4 h-4" />
+              Route Marks ({marks.length})
+            </div>
+            <span className="text-[10px] text-slate-400">Primary: Distance from Start</span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-44 overflow-y-auto pr-1">
+            {marks.map((m) => (
+              <div
+                key={m.id}
+                className="bg-slate-950 border border-slate-800 rounded-md p-2 flex flex-col justify-between space-y-1"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-amber-400 bg-amber-950/80 border border-amber-800/50 px-2 py-0.5 rounded">
+                    MARK {m.number}
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-mono">{m.timeFormatted}</span>
+                </div>
+
+                <div className="flex items-baseline justify-between pt-1">
+                  <div className="text-xs font-bold text-slate-100">
+                    {m.distanceFromStartMeters.toFixed(1)} <span className="text-[10px] font-normal text-slate-400">m from start</span>
+                  </div>
+                  <div className="text-[11px] text-slate-400">
+                    Segment: <span className="font-semibold text-slate-300">{m.segmentDistanceMeters.toFixed(1)} m</span>
+                  </div>
+                </div>
+
+                {/* Optional Note */}
+                <div className="pt-1 border-t border-slate-900 flex items-center justify-between text-[11px]">
+                  {editingMarkId === m.id ? (
+                    <div className="flex items-center gap-1 w-full">
+                      <input
+                        type="text"
+                        value={editingNoteText}
+                        onChange={(e) => setEditingNoteText(e.target.value)}
+                        placeholder="e.g. IC Classroom..."
+                        className="flex-1 bg-slate-900 border border-amber-500/50 rounded px-2 py-0.5 text-xs text-slate-200 focus:outline-none"
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleSaveNote(m.id);
+                        }}
+                      />
+                      <button
+                        onClick={() => handleSaveNote(m.id)}
+                        className="bg-amber-500 text-slate-950 font-bold p-1 rounded hover:bg-amber-400"
+                        title="Save Note"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between w-full">
+                      <span className="text-slate-400 italic truncate max-w-[180px]">
+                        {m.note ? `"${m.note}"` : <span className="text-slate-600 font-normal">No note</span>}
+                      </span>
+                      {onUpdateMarkNote && (
+                        <button
+                          onClick={() => handleStartEditNote(m)}
+                          className="text-slate-500 hover:text-amber-400 p-0.5"
+                          title="Add / Edit Note"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

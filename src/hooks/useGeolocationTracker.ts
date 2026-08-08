@@ -1,8 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { GPSPoint, TrackingStatus, AccuracyQuality, GPSSignalStatus } from '../types';
+import { GPSPoint, TrackingStatus, AccuracyQuality, GPSSignalStatus, RouteMark } from '../types';
 import {
   validateGPSPointAdvanced,
-  computeMovingAverage,
   getAccuracyQuality,
   getGPSSignalStatus,
   StationaryDetector,
@@ -13,6 +12,7 @@ export interface UseGeolocationTrackerReturn {
   startLocation: GPSPoint | null;
   lastLocation: GPSPoint | null;
   path: GPSPoint[];
+  marks: RouteMark[];
   totalDistanceMeters: number;
   elapsedTime: number;
   gpsAccuracy: number | null;
@@ -24,6 +24,8 @@ export interface UseGeolocationTrackerReturn {
   startTracking: () => void;
   stopTracking: () => void;
   resetTracking: () => void;
+  addMark: (note?: string) => RouteMark | null;
+  updateMarkNote: (id: string, note: string) => void;
 }
 
 export function useGeolocationTracker(): UseGeolocationTrackerReturn {
@@ -32,6 +34,7 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
   const [startLocation, setStartLocation] = useState<GPSPoint | null>(null);
   const [lastLocation, setLastLocation] = useState<GPSPoint | null>(null);
   const [path, setPath] = useState<GPSPoint[]>([]);
+  const [marks, setMarks] = useState<RouteMark[]>([]);
   const [totalDistanceMeters, setTotalDistanceMeters] = useState<number>(0);
   const [elapsedTime, setElapsedTime] = useState<number>(0);
   const [trackingStatus, setTrackingStatus] = useState<TrackingStatus>('idle');
@@ -44,7 +47,15 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
   const acceptedPointsRef = useRef<GPSPoint[]>([]);
   const smoothedPathRef = useRef<GPSPoint[]>([]);
   const recentRawPointsBufferRef = useRef<GPSPoint[]>([]);
+  const marksRef = useRef<RouteMark[]>([]);
+  const totalDistanceMetersRef = useRef<number>(0);
+  const speedRef = useRef<number | null>(null);
   const stationaryDetectorRef = useRef<StationaryDetector>(new StationaryDetector());
+
+  // Sync refs with state
+  useEffect(() => {
+    totalDistanceMetersRef.current = totalDistanceMeters;
+  }, [totalDistanceMeters]);
 
   // Position Handler
   const handlePositionUpdate = useCallback((position: GeolocationPosition) => {
@@ -72,32 +83,32 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
 
     if (validation.isValid) {
       acceptedPointsRef.current.push(freshPoint);
-
-      // Smooth coordinates using 5-point moving average for DISPLAY LOCATION
-      const smoothedPoint = computeMovingAverage(acceptedPointsRef.current, 5);
-      setCurrentLocation(smoothedPoint);
+      setCurrentLocation(freshPoint);
 
       // Set start location on first valid point
       setStartLocation((prevStart) => {
-        if (!prevStart) return smoothedPoint;
+        if (!prevStart) return freshPoint;
         return prevStart;
       });
 
-      // Pass smoothed point into Stationary Detector State Machine
-      const motion = stationaryDetectorRef.current.processPoint(smoothedPoint);
-
-      // Update speed display (0 km/h when stationary)
+      // Pass fresh point into Stationary Detector for zero-lag distance calculation
+      const motion = stationaryDetectorRef.current.processPoint(freshPoint);
       setSmoothedSpeed(motion.displaySpeed);
+      speedRef.current = motion.displaySpeed;
 
       // Only accumulate distance and update path for VERIFIED MOVEMENT points
       if (motion.isVerifiedMovement) {
         if (motion.distanceDelta > 0) {
-          setTotalDistanceMeters((prevDist) => prevDist + motion.distanceDelta);
+          setTotalDistanceMeters((prevDist) => {
+            const next = prevDist + motion.distanceDelta;
+            totalDistanceMetersRef.current = next;
+            return next;
+          });
         }
 
         // Update distance path and last verified location
-        smoothedPathRef.current.push(smoothedPoint);
-        setLastLocation(smoothedPoint);
+        smoothedPathRef.current.push(freshPoint);
+        setLastLocation(freshPoint);
         setPath([...smoothedPathRef.current]);
       }
     }
@@ -170,6 +181,7 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     setStartLocation(null);
     setLastLocation(null);
     setPath([]);
+    setMarks([]);
     setTotalDistanceMeters(0);
     setElapsedTime(0);
     setErrorMessage(null);
@@ -179,8 +191,58 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     acceptedPointsRef.current = [];
     smoothedPathRef.current = [];
     recentRawPointsBufferRef.current = [];
+    marksRef.current = [];
+    totalDistanceMetersRef.current = 0;
+    speedRef.current = null;
     stationaryDetectorRef.current.reset();
   }, [stopTracking]);
+
+  const addMark = useCallback((note?: string): RouteMark | null => {
+    const currentLoc = acceptedPointsRef.current[acceptedPointsRef.current.length - 1] || currentLocation || startLocation;
+    if (!currentLoc) return null;
+
+    const markNumber = marksRef.current.length + 1;
+    const now = Date.now();
+    const timeFormatted = new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    const prevMarkDist = marksRef.current.length > 0
+      ? marksRef.current[marksRef.current.length - 1].distanceFromStartMeters
+      : 0;
+
+    const currentDist = totalDistanceMetersRef.current;
+    const segmentDist = Math.max(0, currentDist - prevMarkDist);
+
+    const speedKmH = speedRef.current !== null && speedRef.current >= 0
+      ? speedRef.current * 3.6
+      : (currentLoc.speed && currentLoc.speed >= 0 ? currentLoc.speed * 3.6 : 0);
+
+    const newMark: RouteMark = {
+      id: `mark_${markNumber}_${now}`,
+      number: markNumber,
+      timestamp: now,
+      timeFormatted,
+      distanceFromStartMeters: currentDist,
+      segmentDistanceMeters: segmentDist,
+      latitude: currentLoc.latitude,
+      longitude: currentLoc.longitude,
+      speedKmH: Number(speedKmH.toFixed(1)),
+      accuracyMeters: Number(currentLoc.accuracy.toFixed(1)),
+      note: note ? note.trim() : undefined,
+    };
+
+    const updated = [...marksRef.current, newMark];
+    marksRef.current = updated;
+    setMarks(updated);
+    return newMark;
+  }, [currentLocation, startLocation]);
+
+  const updateMarkNote = useCallback((id: string, note: string) => {
+    const updated = marksRef.current.map((m) =>
+      m.id === id ? { ...m, note: note.trim() || undefined } : m
+    );
+    marksRef.current = updated;
+    setMarks(updated);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -203,6 +265,7 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     startLocation,
     lastLocation,
     path,
+    marks,
     totalDistanceMeters,
     elapsedTime,
     gpsAccuracy,
@@ -214,6 +277,8 @@ export function useGeolocationTracker(): UseGeolocationTrackerReturn {
     startTracking,
     stopTracking,
     resetTracking,
+    addMark,
+    updateMarkNote,
   };
 }
 

@@ -8,6 +8,20 @@ export interface GPSPoint {
   speed?: number | null;
 }
 
+export interface RouteMark {
+  id: string;
+  number: number;
+  timestamp: number;
+  timeFormatted: string;
+  distanceFromStartMeters: number;
+  segmentDistanceMeters: number;
+  latitude: number;
+  longitude: number;
+  speedKmH: number;
+  accuracyMeters: number;
+  note?: string;
+}
+
 export type TrackingStatus = 'idle' | 'tracking' | 'paused' | 'stopped' | 'error';
 
 export type AccuracyQuality = 'Excellent' | 'Good' | 'Fair' | 'Poor';
@@ -36,4 +50,5 @@ export interface MeasurementSession {
   endLocation: { latitude: number; longitude: number } | null;
   totalGPSPoints: number;
   path: GPSPoint[];
+  marks?: RouteMark[];
 }
